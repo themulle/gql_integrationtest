@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-09-26T23:44:38.380Z",
+  "vus_max": 50,
+  "duration_steady": "3m",
+  "total_requests": 85996,
+  "rps": 390.88,
+  "success_rate_percent": 3.59,
+  "latencies_ms": {
+    "simple_queries": {
+      "p50": null,
+      "p90": 2.49,
+      "p95": 3.84,
+      "p99": null
+    },
+    "complex_queries": {
+      "p50": null,
+      "p90": 2.48,
+      "p95": 3.35,
+      "p99": null
+    },
+    "mutations": {
+      "p50": null,
+      "p90": 2.3,
+      "p95": 2.84,
+      "p99": null
+    },
+    "invalid_requests": {
+      "p50": null,
+      "p90": 2.52,
+      "p95": 3.55,
+      "p99": null
+    }
+  },
+  "error_counts": {
+    "rate_limit_exceeded": 81996,
+    "forbidden": 914,
+    "query_too_complex": 0,
+    "response_too_large": 0,
+    "internal_server_error": 0
+  },
+  "idempotent_replays": 362
+}
