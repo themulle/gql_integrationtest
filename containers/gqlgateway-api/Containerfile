@@ -48,6 +48,8 @@ RUN mkdir -p /app/data && chown -R appuser:appgroup /app/data /app
 # Copy published application
 COPY --from=build --chown=appuser:appgroup /app/publish .
 COPY --chown=appuser:appgroup containers/gqlgateway-api/appsettings.Benchmark.json ./appsettings.Production.json
+COPY --chown=appuser:appgroup containers/gqlgateway-api/appsettings.Benchmark.json ./appsettings.Development.json
+COPY --chown=appuser:appgroup containers/gqlgateway-api/appsettings.Benchmark.json ./appsettings.json
 
 USER appuser:appgroup
 
