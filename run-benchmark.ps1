@@ -25,12 +25,16 @@ param(
     [int]$VUs = 50,
     [string]$Duration = "3m",
     [int]$SeedRows = 200000,
-    [bool]$Chaos = $true,
-    [bool]$KeepRunning = $false,
-    [bool]$Pacing = $false,
+    $Chaos = $true,
+    $KeepRunning = $false,
+    $Pacing = $false,
     [int]$ProxyPort = 8082,
     [int]$GatewayPort = 5050
 )
+
+$Chaos = if ($Chaos -is [bool]) { $Chaos } elseif ($Chaos -in @("0", "false", "$false")) { $false } else { $true }
+$KeepRunning = if ($KeepRunning -is [bool]) { $KeepRunning } elseif ($KeepRunning -in @("1", "true", "$true")) { $true } else { $false }
+$Pacing = if ($Pacing -is [bool]) { $Pacing } elseif ($Pacing -in @("1", "true", "$true")) { $true } else { $false }
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -67,7 +71,7 @@ $ErrorActionPreference = "SilentlyContinue"
 try {
     $null = & podman compose version 2>$null
     if ($LASTEXITCODE -eq 0) {
-        $composeCmd = "podman compose"
+        $composeCmd = "podman compose -f podman-compose.yaml"
     }
 } catch {
     # podman compose failed
@@ -78,7 +82,7 @@ try {
 if (-not $composeCmd) {
     $podmanComposeCmd = Get-Command "podman-compose" -ErrorAction SilentlyContinue
     if ($podmanComposeCmd) {
-        $composeCmd = "podman-compose"
+        $composeCmd = "podman-compose -f podman-compose.yaml"
     } else {
         Write-Err "Neither 'podman compose' nor 'podman-compose' is available."
         Write-Err "Podman requires an external compose provider on Windows."
@@ -113,6 +117,20 @@ if (-not (Test-Path (Join-Path $srcBuild "src"))) {
         Write-Warn "Could not find sibling 'gql' directory. Assuming build context is self-contained."
     }
 }
+$srcExt = Join-Path $srcBuild "gql_extensions"
+if (-not (Test-Path (Join-Path $srcExt "src"))) {
+    $candidateExt = Join-Path (Split-Path -Parent $ScriptDir) "gql_extensions"
+    if (-not (Test-Path $candidateExt)) {
+        $candidateExt = "C:\root\gql_extensions"
+    }
+    if (Test-Path (Join-Path $candidateExt "src")) {
+        New-Item -ItemType Directory -Path $srcExt -Force | Out-Null
+        Copy-Item -Path (Join-Path $candidateExt "Directory.Build.props") -Destination $srcExt -Force
+        Copy-Item -Path (Join-Path $candidateExt "src") -Destination $srcExt -Recurse -Force
+        Get-ChildItem -Path $srcExt -Include "bin", "obj" -Recurse -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Success "GqlGateway.Extensions staged successfully."
+    }
+}
 
 # Ensure results folder exists
 $resultsDir = Join-Path $ScriptDir "results"
@@ -140,7 +158,7 @@ function Clean-Teardown {
 try {
     # 3. Build & Start Infrastructure Services
     Write-Info "Building and launching infrastructure services..."
-    Invoke-Expression "$composeCmd up -d --build postgres redis governance-seed gqlgateway-api reverse-proxy prometheus grafana"
+    Invoke-Expression "$composeCmd up -d --build postgres redis governance-seed sqlserver gqlgateway-api reverse-proxy prometheus grafana"
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Failed to build or start infrastructure services. Aborting benchmark."
         exit 1

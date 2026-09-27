@@ -423,6 +423,26 @@ def seed_governance_data(conn):
                 ("salary", "decimal", True, ("NULLIFY", None, None)),
                 ("created_at", "datetime", False, None)
             ]
+        },
+        {
+            "id": "77777777-7777-7777-7777-777777777777",
+            "source_type": "SqlServer",
+            "source_name": "crm",
+            "schema_name": "dbo",
+            "table_name": "orders",
+            "display_name": "CRM Sales Orders",
+            "sensitivity": "NORMAL",
+            "four_eyes": 0,
+            "columns": [
+                ("id", "int", False, None),
+                ("order_number", "varchar", False, None),
+                ("customer_name", "varchar", False, None),
+                ("email", "varchar", True, ("MASK_EMAIL", None, None)),
+                ("total_amount", "decimal", False, None),
+                ("department", "varchar", False, None),
+                ("status", "varchar", False, None),
+                ("created_at", "datetime", False, None)
+            ]
         }
     ]
 
@@ -632,6 +652,58 @@ def seed_governance_data(conn):
             (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
             VALUES (?, ?, NULL, 'Deny', 'User', 'S-1-5-21-FORWARD-USER_BLOCKED', NULL, NULL, ?, ?, 0)
         """, (cid_blk, hr_tid, now_iso, far_future_iso))
+
+    # --------------------------------------------------------------------------
+    # CONSENT 7: SQL Server CRM tables (3-Way Cross-Database benchmarking)
+    # --------------------------------------------------------------------------
+    crm_tid = "77777777-7777-7777-7777-777777777777"
+    # Group Finance: Allow with RLS (department = 'Finance') and masked email
+    cid_crm_grp = str(uuid.uuid5(uuid.UUID(crm_tid), "consent-crm-finance-group"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Allow', 'Group', 'S-1-5-21-GROUP-FINANCE', NULL, NULL, ?, ?, 0)
+    """, (cid_crm_grp, crm_tid, now_iso, far_future_iso))
+
+    for cname, lvl in [("email", 2), ("id", 1), ("order_number", 1), ("customer_name", 1), ("total_amount", 1), ("department", 1), ("status", 1), ("created_at", 1)]:
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENT_COLUMN_RULES (id, consent_id, table_column_id, column_name, access_level)
+            VALUES (?, ?, ?, ?, ?)
+        """, (str(uuid.uuid4()), cid_crm_grp, col_id_map[(crm_tid, cname)], cname, lvl))
+
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENT_ROW_FILTERS
+        (id, consent_id, filter_group, table_column_id, column_name, operator, value_type, value_json, value_source, filter_type)
+        VALUES (?, ?, 1, ?, 'department', 'EQ', 'STRING', ?, 'STATIC', 0)
+    """, (str(uuid.uuid4()), cid_crm_grp, col_id_map[(crm_tid, "department")], json.dumps("Finance")))
+
+    # Role FinanceManager: Allow full access
+    cid_crm_mgr = str(uuid.uuid5(uuid.UUID(crm_tid), "consent-crm-manager-role"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Allow', 'Role', NULL, ?, 'FinanceManager', ?, ?, 0)
+    """, (cid_crm_mgr, crm_tid, role_map["FinanceManager"], now_iso, far_future_iso))
+
+    # Role FinanceAuditor: Allow with masked email
+    cid_crm_aud = str(uuid.uuid5(uuid.UUID(crm_tid), "consent-crm-auditor-role"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Allow', 'Role', NULL, ?, 'FinanceAuditor', ?, ?, 0)
+    """, (cid_crm_aud, crm_tid, role_map["FinanceAuditor"], now_iso, far_future_iso))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENT_COLUMN_RULES (id, consent_id, table_column_id, column_name, access_level)
+        VALUES (?, ?, ?, 'email', 2)
+    """, (str(uuid.uuid4()), cid_crm_aud, col_id_map[(crm_tid, "email")]))
+
+    # Blocked User: Hard Deny
+    cid_crm_blk = str(uuid.uuid5(uuid.UUID(crm_tid), "consent-crm-blocked-user"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Deny', 'User', 'S-1-5-21-FORWARD-USER_BLOCKED', NULL, NULL, ?, ?, 0)
+    """, (cid_crm_blk, crm_tid, now_iso, far_future_iso))
 
     conn.commit()
 

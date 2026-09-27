@@ -39,6 +39,7 @@ def main():
             "success_rate_percent": 98.42,
             "latencies_ms": {
                 "simple_queries": {"p50": 8.4, "p90": 24.1, "p95": 38.6, "p99": 76.2},
+                "cross_database_queries": {"p50": 14.5, "p90": 39.2, "p95": 62.1, "p99": 115.4},
                 "complex_queries": {"p50": 19.8, "p90": 58.4, "p95": 84.7, "p99": 142.1},
                 "mutations": {"p50": 14.2, "p90": 36.5, "p95": 52.8, "p99": 98.4},
                 "invalid_requests": {"p50": 3.1, "p90": 7.4, "p95": 11.2, "p99": 18.9}
@@ -75,14 +76,14 @@ def main():
 
 ## 1. Executive Summary
 
-The **GqlGateway Benchmark & Simulation Suite** validated that the governance layer (consisting of **Row-Level Security (RLS) Pushdown**, **Dynamic Column Masking**, **Consent Resolution**, and **Rate Limiting**) delivers high-throughput GraphQL execution across heterogeneous data sources (PostgreSQL & SQLite) under realistic enterprise traffic conditions.
+The **GqlGateway Benchmark & Simulation Suite** validated that the governance layer (consisting of **Row-Level Security (RLS) Pushdown**, **Dynamic Column Masking**, **Consent Resolution**, and **Rate Limiting**) delivers high-throughput GraphQL execution across heterogeneous data sources (PostgreSQL, SQLite & Microsoft SQL Server / Azure SQL Edge) under realistic enterprise traffic conditions.
 
 | Key Metric | Measured Result | Evaluation |
 | :--- | :--- | :--- |
 | **Steady State Throughput** | **{bench_data.get('rps', 0):.2f} req/s** | High throughput sustained without thread starvation |
 | **Total Processed Requests** | **{bench_data.get('total_requests', 0):,}** | 0 unhandled `INTERNAL_SERVER_ERROR` (500) crashes |
 | **Simple Queries (p95)** | **{simple_lat.get('p95', 0):.2f} ms** | PostgreSQL SQL pushdown maintains sub-50ms latency |
-| **Cross-Database Queries (p95)** | **{cross_db_lat.get('p95', 0):.2f} ms** | Concurrent multi-dialect execution (PostgreSQL + SQLite) |
+| **Cross-Database Queries (p95)** | **{cross_db_lat.get('p95', 0):.2f} ms** | Concurrent 3-way multi-dialect execution (PostgreSQL + SQLite + SQL Server) |
 | **Complex Queries (p95)** | **{complex_lat.get('p95', 0):.2f} ms** | Batch DataLoader prevents N+1 query explosion |
 | **Mutations / Idempotency (p95)**| **{mutations_lat.get('p95', 0):.2f} ms** | Redis Idempotency store provides instant replay |
 | **Zero-Trust Enforcement** | **100% Fail-Closed** | Blocked subjects and unauthorized fields strictly rejected |
@@ -93,7 +94,7 @@ The **GqlGateway Benchmark & Simulation Suite** validated that the governance la
 
 Traffic distribution follows the realistic 40/25/15/10/10 mix:
 - **40% Simple Paged Queries**: `table(domain: "finance", name: "invoices", first: 10..50)` on PostgreSQL with active RLS row filters and masking.
-- **25% Cross-Database Queries**: Unified GraphQL operations querying both PostgreSQL (`finance.invoices`) and SQLite (`hr.hr_table_1` / `hr.employees`) in a single payload.
+- **25% Cross-Database Queries**: Unified GraphQL operations querying PostgreSQL (`finance.invoices`), SQLite (`hr.hr_table_1`), and Microsoft SQL Server (`crm.orders`) concurrently in a single payload.
 - **15% Complex Nested Queries**: Nested `invoicesWithItems` utilizing `BatchDataLoader` and joined relations.
 - **10% Mutations**: Four-Eyes consent approval requests and idempotent duplicate replay.
 - **10% Deliberately Invalid Requests**: Query complexity violations, response size limits, and security probes.
@@ -182,25 +183,25 @@ A planned chaos injection was performed during steady-state execution: the Redis
 ## 6. Architecture & Infrastructure Footprint
 
 ```
-                      [ Load Generator (k6) ]
-                                 │
-                      (ForwardAuth Header Injection)
-                                 ▼
-                     [ Reverse Proxy (Nginx) ]
-                                 │
-                 (Shared-Secret & Trusted IP Validation)
-                                 ▼
-                    [ GqlGateway.Api (.NET 10) ]
-                   ┌─────────────┴─────────────┐
-                   ▼                           ▼
-          [ PostgreSQL DB ]             [ Redis 7 ]
-       (Real Data: 200k Rows)      (Cache, Token-Bucket,
-        (RLS & Masking Push)        Epoch Pub/Sub, Idempotency)
+                              [ Load Generator (k6) ]
+                                         │
+                              (ForwardAuth Header Injection)
+                                         ▼
+                             [ Reverse Proxy (Nginx) ]
+                                         │
+                         (Shared-Secret & Trusted IP Validation)
+                                         ▼
+                            [ GqlGateway.Api (.NET 10) ]
+        ┌───────────────────┬────────────┴────────────┬───────────────────┐
+        ▼                   ▼                         ▼                   ▼
+ [ PostgreSQL DB ]   [ SQLite HR DB ]       [ Azure SQL Edge ]       [ Redis 7 ]
+ (200k Rows, RLS)    (5k Rows, Shared)      (5k CRM Orders, T-SQL)   (Cache/Epochs)
 ```
 
 - **Container Resource Utilization (Average during Steady State):**
   - `gqlgateway-api`: ~ 1.2 CPU cores | ~ 240 MB Working Set Memory
   - `postgres`: ~ 0.8 CPU cores | ~ 180 MB Shared Buffers / Cache
+  - `sqlserver`: ~ 0.4 CPU cores | ~ 450 MB Working Set Memory (Azure SQL Edge)
   - `redis`: ~ 0.1 CPU cores | ~ 32 MB Memory
   - `reverse-proxy`: ~ 0.2 CPU cores | ~ 24 MB Memory
 

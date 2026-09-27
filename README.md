@@ -27,13 +27,14 @@ Vollständige, reproduzierbare Last- und Latenz-Benchmark-Umgebung für das Proj
 ```
 
 ### Enthaltene Services in der `podman-compose.yaml`
-1. **`gqlgateway-api`**: Multi-Stage Build (`Containerfile`) mit .NET 10 Runtime. Startet in gehärteter Production-Konfiguration: ForwardAuth aktiv, TestAuthHandler deaktiviert, Token-Bucket Rate Limiter aktiv, Postgres- und Redis-Anbindung.
-2. **`postgres`**: Echtes Enterprise-RDBMS für Invoices & Items. Mit automatischen Init-SQL-Skripten, die über `generate_series()` konfigurierbare Zeilenmengen (Standard: 200.000 Zeilen) inkl. sensibler Daten (`email`, `iban`, `salary`) für Masking-Tests seeden.
-3. **`redis`**: Cache-Store für `ConsentCacheService` (Epoch Invalidation Pub/Sub), `RedisRateLimiterService` (Token-Bucket Lua-Scripts), `RedisIdempotencyStore` und EventBus.
-4. **`governance-seed`**: Init-Container (`Containerfile`), der die SQLite-Governance-DB (`/data/governance.db`) mit Rollen, Gruppen, Data-Ownern, Vier-Augen-Prinzip-Tabellen, Masking-Regeln und RLS-Row-Filtern initialisiert.
-5. **`reverse-proxy`**: Nginx ForwardAuth Gateway. Injiziert `X-Forwarded-Secret` und leitet Benutzeridentitäten (`X-Forwarded-User`, `X-Forwarded-Roles`, `X-Forwarded-Groups`) unter echten Netzwerkbedingungen an das Gateway weiter.
-6. **`load-generator`**: k6-Container mit parametrisierbarem Lastprofil (Ramp-up → Steady State → Ramp-down) und dem geforderten 60/20/10/10 Query-Mix.
-7. **`prometheus` & `grafana`**: Automatisches Scraping von Gateway-Metriken (`/metrics`) und vorkonfiguriertes Grafana-Dashboard (`http://localhost:3000`).
+1. **`gqlgateway-api`**: Multi-Stage Build (`Containerfile`) mit .NET 10 Runtime auf Port 5050. Startet in gehärteter Production-Konfiguration: ForwardAuth aktiv, TestAuthHandler deaktiviert, Token-Bucket Rate Limiter aktiv, Postgres-, SQLite-, SQL Server- und Redis-Anbindung.
+2. **`postgres`**: Enterprise-RDBMS für Invoices & Line Items (Domain `finance`). Seeding mit konfigurierbaren Zeilenmengen (Standard: 200.000 Zeilen) inkl. sensibler Daten (`email`, `iban`, `salary`).
+3. **`sqlserver`**: Azure SQL Edge Engine (`mcr.microsoft.com/azure-sql-edge:latest`) für CRM Sales Orders (Domain `crm`). Leichtgewichtige MS SQL Server-Engine (~500 MB RAM) zur Validierung von T-SQL-Dialekten (`ORDER BY ... OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`) und sensiblen E-Mail-Maskierungen.
+4. **`governance-seed`**: Init-Container (`Containerfile`), der die SQLite-Governance-DB (`/data/governance.db`) und die SQLite-HR-Datenbank (`/data/hr.db`, 5.000 Mitarbeiter) initialisiert, inkl. Rollen, Gruppen, Data-Ownern, Masking-Regeln und RLS-Row-Filtern.
+5. **`redis`**: Cache-Store für `ConsentCacheService` (Epoch Invalidation Pub/Sub), `RedisRateLimiterService` (Token-Bucket Lua-Scripts), `RedisIdempotencyStore` und EventBus.
+6. **`reverse-proxy`**: Nginx ForwardAuth Gateway auf Host-Port 8082. Injiziert `X-Forwarded-Secret` und leitet Benutzeridentitäten (`X-Forwarded-User`, `X-Forwarded-Roles`, `X-Forwarded-Groups`) unter echten Netzwerkbedingungen an das Gateway weiter.
+7. **`load-generator`**: k6-Container mit parametrisierbarem Lastprofil (Ramp-up → Steady State → Ramp-down) und 3-Way Cross-Database GraphQL-Abfragen (PostgreSQL + SQLite + SQL Server).
+8. **`prometheus` & `grafana`**: Automatisches Scraping von Gateway-Metriken (`/metrics`) und vorkonfiguriertes Grafana-Dashboard (`http://localhost:3000`).
 
 ---
 

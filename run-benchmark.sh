@@ -73,8 +73,8 @@ cleanup() {
 trap cleanup EXIT
 
 # 2. Build and Launch Services
-log "Starting infrastructure (PostgreSQL, Redis, Governance Seed, GqlGateway API, Reverse Proxy, Prometheus, Grafana)..."
-${COMPOSE} up -d --build postgres redis governance-seed gqlgateway-api reverse-proxy prometheus grafana
+log "Starting infrastructure (PostgreSQL, Redis, Governance Seed, SQL Server, GqlGateway API, Reverse Proxy, Prometheus, Grafana)..."
+${COMPOSE} up -d --build postgres redis governance-seed sqlserver gqlgateway-api reverse-proxy prometheus grafana
 
 # 3. Wait for Health Checks
 log "Waiting for services to become healthy..."

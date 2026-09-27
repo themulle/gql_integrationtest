@@ -79,6 +79,29 @@ services:
       start_period: 1s
 
   # ----------------------------------------------------------------------------
+  # 3b. Azure SQL Edge (Lightweight MS SQL Server Engine for T-SQL Dialect)
+  # ----------------------------------------------------------------------------
+  sqlserver:
+    build:
+      context: .
+      dockerfile: containers/sqlserver/Containerfile
+    container_name: gqlgateway-sqlserver
+    networks:
+      - gateway-bench-net
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "GqlPassw0rd!2026"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/.sqlserver_ready && /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'GqlPassw0rd!2026' -Q 'SELECT 1' || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 25
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
   # 4. GqlGateway.Api (.NET 8/10 Microservice with Zero-Trust Governance Pipeline)
   # ----------------------------------------------------------------------------
   gqlgateway-api:
@@ -95,6 +118,7 @@ services:
       DOTNET_RUNNING_IN_CONTAINER: "true"
       # Overrides for Postgres and Redis connection
       Gateway__DataSources__Connections__finance__ConnectionString: "Host=postgres;Port=5432;Database=governancedb;Username=gqluser;Password=gqlpass;Pooling=true;Minimum Pool Size=5;Maximum Pool Size=100"
+      Gateway__DataSources__Connections__crm__ConnectionString: "Server=sqlserver,1433;Database=crmdb;User Id=sa;Password=GqlPassw0rd!2026;TrustServerCertificate=True;Connect Timeout=15;Pooling=true;Min Pool Size=3;Max Pool Size=50"
       Gateway__Caching__Redis__Configuration: "redis:6379,abortConnect=false"
     volumes:
       - governance-data:/app/data:z
@@ -106,6 +130,8 @@ services:
       redis:
         condition: service_healthy
       governance-seed:
+        condition: service_healthy
+      sqlserver:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5050/health/live || exit 1"]

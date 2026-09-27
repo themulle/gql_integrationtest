@@ -5,23 +5,28 @@
 
 # --- Stage 1: Build & Publish ---
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-WORKDIR /src
+WORKDIR /
 
-# Copy solution and project files first for optimal docker layer caching
-COPY src_build/GqlGateway.sln src_build/Directory.Build.props ./
-COPY src_build/src/GqlGateway.Domain/GqlGateway.Domain.csproj src/GqlGateway.Domain/
-COPY src_build/src/GqlGateway.Application/GqlGateway.Application.csproj src/GqlGateway.Application/
-COPY src_build/src/GqlGateway.GraphQL/GqlGateway.GraphQL.csproj src/GqlGateway.GraphQL/
-COPY src_build/src/GqlGateway.Infrastructure/GqlGateway.Infrastructure.csproj src/GqlGateway.Infrastructure/
-COPY src_build/src/GqlGateway.Api/GqlGateway.Api.csproj src/GqlGateway.Api/
+# Copy project files first for optimal docker layer caching
+COPY src_build/GqlGateway.sln src_build/Directory.Build.props /gql/
+COPY src_build/src/GqlGateway.Domain/GqlGateway.Domain.csproj /gql/src/GqlGateway.Domain/
+COPY src_build/src/GqlGateway.Application/GqlGateway.Application.csproj /gql/src/GqlGateway.Application/
+COPY src_build/src/GqlGateway.GraphQL/GqlGateway.GraphQL.csproj /gql/src/GqlGateway.GraphQL/
+COPY src_build/src/GqlGateway.Infrastructure/GqlGateway.Infrastructure.csproj /gql/src/GqlGateway.Infrastructure/
+COPY src_build/src/GqlGateway.Api/GqlGateway.Api.csproj /gql/src/GqlGateway.Api/
 
+COPY src_build/gql_extensions/Directory.Build.props /gql_extensions/
+COPY src_build/gql_extensions/src/GqlGateway.Extensions/GqlGateway.Extensions.csproj /gql_extensions/src/GqlGateway.Extensions/
+
+WORKDIR /gql
 RUN dotnet restore src/GqlGateway.Api/GqlGateway.Api.csproj
 
 # Copy remaining source code
-COPY src_build/src/ src/
+COPY src_build/src/ /gql/src/
+COPY src_build/gql_extensions/src/ /gql_extensions/src/
 
 # Build and publish
-WORKDIR /src/src/GqlGateway.Api
+WORKDIR /gql/src/GqlGateway.Api
 RUN dotnet publish -c Release -o /app/publish --no-restore /p:TreatWarningsAsErrors=false
 
 # --- Stage 2: Runtime Image ---

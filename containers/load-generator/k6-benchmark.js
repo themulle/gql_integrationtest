@@ -140,7 +140,7 @@ export default function () {
   }
 
   // --------------------------------------------------------------------------
-  // 1b. 25% Cross-Database Query (PostgreSQL Finance + SQLite HR)
+  // 1b. 25% 3-Way Cross-Database Query (PostgreSQL Finance + SQLite HR + SQL Server CRM)
   // --------------------------------------------------------------------------
   else if (randSelector < 65) {
     const first = randInt(10, 30);
@@ -148,7 +148,7 @@ export default function () {
 
     const payload = JSON.stringify({
       query: `
-        query CrossDatabaseInvoicesAndEmployees($first: Int, $after: Int) {
+        query CrossDatabaseTriDb($first: Int, $after: Int) {
           postgresInvoices: table(domain: "finance", name: "invoices", schema: "public", first: $first, after: $after) {
             tableName
             totalCount
@@ -159,12 +159,10 @@ export default function () {
             totalCount
             jsonRows
           }
-          hrTyped: hr {
-            employees(first: $first, after: $after) {
-              tableName
-              totalCount
-              jsonRows
-            }
+          sqlServerOrders: table(domain: "crm", name: "orders", schema: "dbo", first: $first, after: $after) {
+            tableName
+            totalCount
+            jsonRows
           }
         }
       `,
@@ -176,6 +174,7 @@ export default function () {
       'cross-db query status is 200': (r) => r.status === 200,
       'cross-db postgres data present': (r) => r.body.includes('postgresInvoices'),
       'cross-db sqlite data present': (r) => r.body.includes('sqliteEmployees'),
+      'cross-db sqlserver data present': (r) => r.body.includes('sqlServerOrders'),
     });
     parseGraphQLResponse(res, latencyCrossDb);
   }

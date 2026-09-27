@@ -47,4 +47,31 @@ rsync -av --exclude="bin" --exclude="obj" --exclude=".git" --exclude=".vs" \
     find "${TARGET_DIR}" -type d \( -name "bin" -o -name "obj" \) -exec rm -rf {} + 2>/dev/null || true
 }
 
+EXT_CANDIDATES=(
+    "${ROOT_DIR}/../gql_extensions"
+    "/root/gql_extensions"
+    "${ROOT_DIR}/gql_extensions"
+)
+EXT_FOUND=""
+for candidate in "${EXT_CANDIDATES[@]}"; do
+    if [ -d "${candidate}/src" ]; then
+        EXT_FOUND="${candidate}"
+        break
+    fi
+done
+
+if [ -n "${EXT_FOUND}" ]; then
+    echo "[stage_sources] Staging GqlGateway.Extensions from ${EXT_FOUND} to ${TARGET_DIR}/gql_extensions..."
+    mkdir -p "${TARGET_DIR}/gql_extensions"
+    rsync -av --exclude="bin" --exclude="obj" --exclude=".git" --exclude=".vs" \
+        "${EXT_FOUND}/src" \
+        "${EXT_FOUND}/Directory.Build.props" \
+        "${TARGET_DIR}/gql_extensions/" || {
+        mkdir -p "${TARGET_DIR}/gql_extensions/src"
+        cp "${EXT_FOUND}/Directory.Build.props" "${TARGET_DIR}/gql_extensions/"
+        cp -r "${EXT_FOUND}/src" "${TARGET_DIR}/gql_extensions/"
+        find "${TARGET_DIR}/gql_extensions" -type d \( -name "bin" -o -name "obj" \) -exec rm -rf {} + 2>/dev/null || true
+    }
+fi
+
 echo "[stage_sources] Successfully staged source code."
