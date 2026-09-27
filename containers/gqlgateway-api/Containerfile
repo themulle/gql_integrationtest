@@ -46,14 +46,14 @@ COPY --chown=appuser:appgroup containers/gqlgateway-api/appsettings.Benchmark.js
 
 USER appuser:appgroup
 
-ENV ASPNETCORE_URLS=http://+:5000 \
+ENV ASPNETCORE_URLS=http://+:5050 \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_RUNNING_IN_CONTAINER=true \
     HMAC_SECRET_KEY=bench-super-secret-hmac-master-key-2026
 
-EXPOSE 5000
+EXPOSE 5050
 
 HEALTHCHECK --interval=3s --timeout=3s --start-period=5s --retries=10 \
-    CMD curl -fsS http://127.0.0.1:5000/health/live || exit 1
+    CMD curl -fsS http://127.0.0.1:5050/health/live || exit 1
 
 ENTRYPOINT ["dotnet", "GqlGateway.Api.dll"]

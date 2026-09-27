@@ -27,7 +27,9 @@ param(
     [int]$SeedRows = 200000,
     [bool]$Chaos = $true,
     [bool]$KeepRunning = $false,
-    [bool]$Pacing = $false
+    [bool]$Pacing = $false,
+    [int]$ProxyPort = 8082,
+    [int]$GatewayPort = 5050
 )
 
 $ErrorActionPreference = "Stop"
@@ -122,6 +124,8 @@ $env:SEED_ROW_COUNT = $SeedRows.ToString()
 $env:VUS = $VUs.ToString()
 $env:DURATION_STEADY = $Duration
 $env:PACING_SLEEP = if ($Pacing) { "true" } else { "false" }
+$env:REVERSE_PROXY_PORT = $ProxyPort.ToString()
+$env:GATEWAY_PORT = $GatewayPort.ToString()
 
 # Cleanup trap to ensure graceful teardown on exit or error
 $script:teardownNeeded = $true
@@ -159,7 +163,7 @@ try {
         foreach ($hostCandidate in @("localhost", $wslIp)) {
             if (-not $hostCandidate) { continue }
             try {
-                $resp = Invoke-RestMethod -Uri "http://${hostCandidate}:8080/health/ready" -Method Get -TimeoutSec 3 -ErrorAction SilentlyContinue
+                $resp = Invoke-RestMethod -Uri "http://${hostCandidate}:${ProxyPort}/health/ready" -Method Get -TimeoutSec 3 -ErrorAction SilentlyContinue
                 if ($resp -and $resp.status -eq "Ready") {
                     $targetHost = $hostCandidate
                     $isReady = $true
@@ -180,8 +184,8 @@ try {
         Invoke-Expression "$composeCmd logs gqlgateway-api"
         exit 1
     }
-    $env:TARGET_PROXY = "http://${targetHost}:8080"
-    Write-Success "All services healthy! (Reverse Proxy: ${env:TARGET_PROXY}, Gateway: :5000, Grafana: :3000, Prometheus: :9090)"
+    $env:TARGET_PROXY = "http://${targetHost}:${ProxyPort}"
+    Write-Success "All services healthy! (Reverse Proxy: ${env:TARGET_PROXY}, Gateway: :${GatewayPort}, Grafana: :3000, Prometheus: :9090)"
 
     # 5. Execute k6 Load Generator
     Write-Info "Starting k6 Load Generator ($VUs VUs, Steady State: $Duration)..."

@@ -90,7 +90,7 @@ services:
       - gateway-bench-net
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:5000
+      ASPNETCORE_URLS: http://+:5050
       HMAC_SECRET_KEY: bench-super-secret-hmac-master-key-2026
       DOTNET_RUNNING_IN_CONTAINER: "true"
       # Overrides for Postgres and Redis connection
@@ -99,7 +99,7 @@ services:
     volumes:
       - governance-data:/app/data:z
     ports:
-      - "5000:5000"
+      - "${GATEWAY_PORT:-5050}:5050"
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,7 +108,7 @@ services:
       governance-seed:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5000/health/live || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5050/health/live || exit 1"]
       interval: 3s
       timeout: 3s
       retries: 25
@@ -125,7 +125,7 @@ services:
     networks:
       - gateway-bench-net
     ports:
-      - "8080:8080"
+      - "${REVERSE_PROXY_PORT:-8082}:8080"
     depends_on:
       gqlgateway-api:
         condition: service_healthy

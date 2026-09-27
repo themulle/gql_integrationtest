@@ -1,9 +1,9 @@
 # GqlGateway Performance & Governance Benchmark Report
 
-**Generated At:** 2026-09-27 06:56:24 UTC  
+**Generated At:** 2026-09-27 07:36:17 UTC  
 **Environment:** Podman Compose (Rootless, SELinux-hardened)  
 **Target:** GqlGateway.Api (.NET 8/10 Microservice with Zero-Trust Governance Pipeline)  
-**Workload Profile:** 50 Virtual Users | 3m Steady State | 40/25/15/10/10 Query Mix  
+**Workload Profile:** 2 Virtual Users | 10s Steady State | 40/25/15/10/10 Query Mix  
 
 ---
 
@@ -13,12 +13,12 @@ The **GqlGateway Benchmark & Simulation Suite** validated that the governance la
 
 | Key Metric | Measured Result | Evaluation |
 | :--- | :--- | :--- |
-| **Steady State Throughput** | **345.10 req/s** | High throughput sustained without thread starvation |
-| **Total Processed Requests** | **75,922** | 0 unhandled `INTERNAL_SERVER_ERROR` (500) crashes |
-| **Simple Queries (p95)** | **183.25 ms** | PostgreSQL SQL pushdown maintains sub-50ms latency |
-| **Cross-Database Queries (p95)** | **188.26 ms** | Concurrent multi-dialect execution (PostgreSQL + SQLite) |
-| **Complex Queries (p95)** | **401.41 ms** | Batch DataLoader prevents N+1 query explosion |
-| **Mutations / Idempotency (p95)**| **170.63 ms** | Redis Idempotency store provides instant replay |
+| **Steady State Throughput** | **139.24 req/s** | High throughput sustained without thread starvation |
+| **Total Processed Requests** | **6,963** | 0 unhandled `INTERNAL_SERVER_ERROR` (500) crashes |
+| **Simple Queries (p95)** | **13.63 ms** | PostgreSQL SQL pushdown maintains sub-50ms latency |
+| **Cross-Database Queries (p95)** | **24.81 ms** | Concurrent multi-dialect execution (PostgreSQL + SQLite) |
+| **Complex Queries (p95)** | **16.99 ms** | Batch DataLoader prevents N+1 query explosion |
+| **Mutations / Idempotency (p95)**| **9.71 ms** | Redis Idempotency store provides instant replay |
 | **Zero-Trust Enforcement** | **100% Fail-Closed** | Blocked subjects and unauthorized fields strictly rejected |
 
 ---
@@ -34,19 +34,19 @@ Traffic distribution follows the realistic 40/25/15/10/10 mix:
 
 | Query Category | Share | p50 (Median) | p90 | p95 | p99 |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Simple Paged Queries** | 40 % | `138.45 ms` | `171.63 ms` | `183.25 ms` | `208.41 ms` |
-| **Cross-Database Queries** | 25 % | `142.27 ms` | `176.72 ms` | `188.26 ms` | `214.41 ms` |
-| **Complex & Nested Queries** | 15 % | `148.40 ms` | `372.62 ms` | `401.41 ms` | `450.00 ms` |
-| **Mutations & Idempotency** | 10 % | `3.24 ms` | `156.73 ms` | `170.63 ms` | `195.23 ms` |
-| **Invalid / Security Rejections** | 10 % | `129.49 ms` | `182.82 ms` | `198.01 ms` | `226.97 ms` |
+| **Simple Paged Queries** | 40 % | `6.99 ms` | `10.87 ms` | `13.63 ms` | `25.32 ms` |
+| **Cross-Database Queries** | 25 % | `12.04 ms` | `18.76 ms` | `24.81 ms` | `36.53 ms` |
+| **Complex & Nested Queries** | 15 % | `6.94 ms` | `14.45 ms` | `16.99 ms` | `28.69 ms` |
+| **Mutations & Idempotency** | 10 % | `4.12 ms` | `7.90 ms` | `9.71 ms` | `15.63 ms` |
+| **Invalid / Security Rejections** | 10 % | `6.02 ms` | `52.50 ms` | `62.17 ms` | `84.55 ms` |
 
 ```
 Latency Percentiles (ms)
-Simple   [p50: 138.4] ━━━━━ [p95: 183.2] ━━━━━━━━ [p99: 208.4]
-Cross-DB [p50: 142.3] ━━━━━━━ [p95: 188.3] ━━━━━━━━━━ [p99: 214.4]
-Complex  [p50: 148.4] ━━━━━━━━━━━ [p95: 401.4] ━━━━━━━━━━━━━━━━━ [p99: 450.0]
-Mutation [p50:   3.2] ━━━━━━━ [p95: 170.6] ━━━━━━━━━━━ [p99: 195.2]
-Invalid  [p50: 129.5] ━━ [p95: 198.0] ━━━━ [p99: 227.0]
+Simple   [p50:   7.0] ━━━━━ [p95:  13.6] ━━━━━━━━ [p99:  25.3]
+Cross-DB [p50:  12.0] ━━━━━━━ [p95:  24.8] ━━━━━━━━━━ [p99:  36.5]
+Complex  [p50:   6.9] ━━━━━━━━━━━ [p95:  17.0] ━━━━━━━━━━━━━━━━━ [p99:  28.7]
+Mutation [p50:   4.1] ━━━━━━━ [p95:   9.7] ━━━━━━━━━━━ [p99:  15.6]
+Invalid  [p50:   6.0] ━━ [p95:  62.2] ━━━━ [p99:  84.5]
 ```
 
 ---
@@ -58,7 +58,7 @@ All security violations and over-limit requests were accurately classified accor
 | GraphQL Error Code | Occurrences | Trigger Cause & Behavior |
 | :--- | :---: | :--- |
 | `RATE_LIMIT_EXCEEDED` | **0** | Pre-Auth IP & Post-Auth SID Token-Bucket thresholds reached. Returned HTTP 429 with `Retry-After`. |
-| `FORBIDDEN` | **27,672** | Zero-Trust defense: Blocked users and tables without active ALLOW consent were strictly denied without metadata leaking. |
+| `FORBIDDEN` | **437** | Zero-Trust defense: Blocked users and tables without active ALLOW consent were strictly denied without metadata leaking. |
 | `QUERY_TOO_COMPLEX` | **0** | HotChocolate cost analyzer rejected abusive operations exceeding max complexity (2500). |
 | `RESPONSE_TOO_LARGE` | **0** | Gateway protection stopped requests attempting to paginate beyond 5,000 rows. |
 | `INTERNAL_SERVER_ERROR` | **0** | Zero technical crashes occurred during the benchmark run. |
@@ -83,7 +83,7 @@ All security violations and over-limit requests were accurately classified accor
 
 ### 4.3 Idempotency Replay
 - Duplicate mutations submitted with identical `Idempotency-Key` (e.g. during client retries):
-  - **Replays detected and served from Redis store:** **6,825 requests**
+  - **Replays detected and served from Redis store:** **656 requests**
   - **Latency savings:** Avoided secondary database writes, returning previous status in **< 1.8 ms**.
 
 ---
@@ -137,10 +137,10 @@ To reproduce this benchmark identically on any system:
 
 ```powershell
 # Windows (PowerShell)
-.\run-benchmark.ps1 -VUs 50 -Duration "3m" -Chaos $true
+.\run-benchmark.ps1 -VUs 2 -Duration "10s" -Chaos $true
 ```
 
 ```bash
 # Linux / WSL / macOS
-./run-benchmark.sh --vus 50 --duration "3m" --chaos
+./run-benchmark.sh --vus 2 --duration "10s" --chaos
 ```

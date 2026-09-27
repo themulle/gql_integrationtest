@@ -95,7 +95,7 @@ if [[ "${READY}" != "true" ]]; then
     ${COMPOSE} logs gqlgateway-api
     exit 1
 fi
-log_success "All services healthy! (Reverse Proxy: :8080, Gateway: :5000, Grafana: :3000, Prometheus: :9090)"
+log_success "All services healthy! (Reverse Proxy: :8080, Gateway: :5050, Grafana: :3000, Prometheus: :9090)"
 
 # 4. Run k6 Load Generator
 log "Executing k6 benchmark (${VUS} VUs, Steady State: ${DURATION_STEADY})..."

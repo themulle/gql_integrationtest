@@ -15,7 +15,7 @@ Vollständige, reproduzierbare Last- und Latenz-Benchmark-Umgebung für das Proj
                         [ Nginx Reverse Proxy ]
                (ForwardAuth Ingress, Header Injection, Shared Secret)
                                      │
-                             HTTP (Port 5000)
+                             HTTP (Port 5050)
                                      ▼
                         [ GqlGateway.Api (.NET 10) ]
                    ┌─────────────────┼─────────────────┐

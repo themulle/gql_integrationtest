@@ -16,7 +16,7 @@ import urllib.request
 import urllib.error
 import sys
 
-TARGET_PROXY = os.environ.get("TARGET_PROXY", "http://localhost:8080")
+TARGET_PROXY = os.environ.get("TARGET_PROXY", "http://localhost:8082")
 TARGET_GRAPHQL = f"{TARGET_PROXY}/graphql"
 REDIS_CONTAINER = "gqlgateway-redis"
 
