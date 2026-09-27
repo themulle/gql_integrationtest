@@ -115,6 +115,8 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5050
       HMAC_SECRET_KEY: bench-super-secret-hmac-master-key-2026
+      GQL_PROD_BENCHMARK_SECRET_KEY: bench-super-secret-hmac-master-key-2026
+      Gateway__DataMasking__HmacSecret: bench-super-secret-hmac-master-key-2026
       DOTNET_RUNNING_IN_CONTAINER: "true"
       # Overrides for Postgres and Redis connection
       Gateway__DataSources__Connections__finance__ConnectionString: "Host=postgres;Port=5432;Database=governancedb;Username=gqluser;Password=gqlpass;Pooling=true;Minimum Pool Size=5;Maximum Pool Size=100"
