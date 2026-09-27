@@ -1,42 +1,48 @@
 {
-  "timestamp": "2026-09-26T23:44:38.380Z",
+  "timestamp": "2026-09-27T06:56:08.528Z",
   "vus_max": 50,
   "duration_steady": "3m",
-  "total_requests": 85996,
-  "rps": 390.88,
-  "success_rate_percent": 3.59,
+  "total_requests": 75922,
+  "rps": 345.1,
+  "success_rate_percent": 75.62,
   "latencies_ms": {
     "simple_queries": {
-      "p50": null,
-      "p90": 2.49,
-      "p95": 3.84,
-      "p99": null
+      "p50": 138.45,
+      "p90": 171.63,
+      "p95": 183.25,
+      "p99": 208.41
+    },
+    "cross_database_queries": {
+      "p50": 142.27,
+      "p90": 176.72,
+      "p95": 188.26,
+      "p99": 214.41
     },
     "complex_queries": {
-      "p50": null,
-      "p90": 2.48,
-      "p95": 3.35,
-      "p99": null
+      "p50": 148.4,
+      "p90": 372.62,
+      "p95": 401.41,
+      "p99": 450
     },
     "mutations": {
-      "p50": null,
-      "p90": 2.3,
-      "p95": 2.84,
-      "p99": null
+      "p50": 3.24,
+      "p90": 156.73,
+      "p95": 170.63,
+      "p99": 195.23
     },
     "invalid_requests": {
-      "p50": null,
-      "p90": 2.52,
-      "p95": 3.55,
-      "p99": null
+      "p50": 129.49,
+      "p90": 182.82,
+      "p95": 198.01,
+      "p99": 226.97
     }
   },
   "error_counts": {
-    "rate_limit_exceeded": 81996,
-    "forbidden": 914,
+    "rate_limit_exceeded": 0,
+    "forbidden": 27672,
     "query_too_complex": 0,
     "response_too_large": 0,
     "internal_server_error": 0
   },
-  "idempotent_replays": 362
+  "idempotent_replays": 6825
 }

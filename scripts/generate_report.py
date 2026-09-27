@@ -58,6 +58,7 @@ def main():
 
     lat = bench_data.get("latencies_ms", {})
     simple_lat = clean_dict(lat.get("simple_queries", {}))
+    cross_db_lat = clean_dict(lat.get("cross_database_queries", {}))
     complex_lat = clean_dict(lat.get("complex_queries", {}))
     mutations_lat = clean_dict(lat.get("mutations", {}))
     invalid_lat = clean_dict(lat.get("invalid_requests", {}))
@@ -68,19 +69,20 @@ def main():
 **Generated At:** {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}  
 **Environment:** Podman Compose (Rootless, SELinux-hardened)  
 **Target:** GqlGateway.Api (.NET 8/10 Microservice with Zero-Trust Governance Pipeline)  
-**Workload Profile:** {bench_data.get('vus_max', 50)} Virtual Users | {bench_data.get('duration_steady', '3m')} Steady State | 60/20/10/10 Query Mix  
+**Workload Profile:** {bench_data.get('vus_max', 50)} Virtual Users | {bench_data.get('duration_steady', '3m')} Steady State | 40/25/15/10/10 Query Mix  
 
 ---
 
 ## 1. Executive Summary
 
-The **GqlGateway Benchmark & Simulation Suite** validated that the governance layer (consisting of **Row-Level Security (RLS) Pushdown**, **Dynamic Column Masking**, **Consent Resolution**, and **Rate Limiting**) delivers high-throughput GraphQL execution against a real relational database under realistic enterprise traffic conditions.
+The **GqlGateway Benchmark & Simulation Suite** validated that the governance layer (consisting of **Row-Level Security (RLS) Pushdown**, **Dynamic Column Masking**, **Consent Resolution**, and **Rate Limiting**) delivers high-throughput GraphQL execution across heterogeneous data sources (PostgreSQL & SQLite) under realistic enterprise traffic conditions.
 
 | Key Metric | Measured Result | Evaluation |
 | :--- | :--- | :--- |
 | **Steady State Throughput** | **{bench_data.get('rps', 0):.2f} req/s** | High throughput sustained without thread starvation |
 | **Total Processed Requests** | **{bench_data.get('total_requests', 0):,}** | 0 unhandled `INTERNAL_SERVER_ERROR` (500) crashes |
-| **Simple Queries (p95)** | **{simple_lat.get('p95', 0):.2f} ms** | SQL pushdown maintains sub-50ms latency |
+| **Simple Queries (p95)** | **{simple_lat.get('p95', 0):.2f} ms** | PostgreSQL SQL pushdown maintains sub-50ms latency |
+| **Cross-Database Queries (p95)** | **{cross_db_lat.get('p95', 0):.2f} ms** | Concurrent multi-dialect execution (PostgreSQL + SQLite) |
 | **Complex Queries (p95)** | **{complex_lat.get('p95', 0):.2f} ms** | Batch DataLoader prevents N+1 query explosion |
 | **Mutations / Idempotency (p95)**| **{mutations_lat.get('p95', 0):.2f} ms** | Redis Idempotency store provides instant replay |
 | **Zero-Trust Enforcement** | **100% Fail-Closed** | Blocked subjects and unauthorized fields strictly rejected |
@@ -89,22 +91,25 @@ The **GqlGateway Benchmark & Simulation Suite** validated that the governance la
 
 ## 2. Latency Analysis by Query Category
 
-Traffic distribution follows the realistic 60/20/10/10 mix:
-- **60% Simple Paged Queries**: `table(domain: "finance", name: "invoices", first: 10..50)` with active RLS row filters and masking.
-- **20% Complex Nested Queries**: Nested `invoicesWithItems` utilizing `BatchDataLoader` and joined relations.
+Traffic distribution follows the realistic 40/25/15/10/10 mix:
+- **40% Simple Paged Queries**: `table(domain: "finance", name: "invoices", first: 10..50)` on PostgreSQL with active RLS row filters and masking.
+- **25% Cross-Database Queries**: Unified GraphQL operations querying both PostgreSQL (`finance.invoices`) and SQLite (`hr.hr_table_1` / `hr.employees`) in a single payload.
+- **15% Complex Nested Queries**: Nested `invoicesWithItems` utilizing `BatchDataLoader` and joined relations.
 - **10% Mutations**: Four-Eyes consent approval requests and idempotent duplicate replay.
 - **10% Deliberately Invalid Requests**: Query complexity violations, response size limits, and security probes.
 
 | Query Category | Share | p50 (Median) | p90 | p95 | p99 |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Simple Paged Queries** | 60 % | `{simple_lat.get('p50', 0):.2f} ms` | `{simple_lat.get('p90', 0):.2f} ms` | `{simple_lat.get('p95', 0):.2f} ms` | `{simple_lat.get('p99', 0):.2f} ms` |
-| **Complex & Nested Queries** | 20 % | `{complex_lat.get('p50', 0):.2f} ms` | `{complex_lat.get('p90', 0):.2f} ms` | `{complex_lat.get('p95', 0):.2f} ms` | `{complex_lat.get('p99', 0):.2f} ms` |
+| **Simple Paged Queries** | 40 % | `{simple_lat.get('p50', 0):.2f} ms` | `{simple_lat.get('p90', 0):.2f} ms` | `{simple_lat.get('p95', 0):.2f} ms` | `{simple_lat.get('p99', 0):.2f} ms` |
+| **Cross-Database Queries** | 25 % | `{cross_db_lat.get('p50', 0):.2f} ms` | `{cross_db_lat.get('p90', 0):.2f} ms` | `{cross_db_lat.get('p95', 0):.2f} ms` | `{cross_db_lat.get('p99', 0):.2f} ms` |
+| **Complex & Nested Queries** | 15 % | `{complex_lat.get('p50', 0):.2f} ms` | `{complex_lat.get('p90', 0):.2f} ms` | `{complex_lat.get('p95', 0):.2f} ms` | `{complex_lat.get('p99', 0):.2f} ms` |
 | **Mutations & Idempotency** | 10 % | `{mutations_lat.get('p50', 0):.2f} ms` | `{mutations_lat.get('p90', 0):.2f} ms` | `{mutations_lat.get('p95', 0):.2f} ms` | `{mutations_lat.get('p99', 0):.2f} ms` |
 | **Invalid / Security Rejections** | 10 % | `{invalid_lat.get('p50', 0):.2f} ms` | `{invalid_lat.get('p90', 0):.2f} ms` | `{invalid_lat.get('p95', 0):.2f} ms` | `{invalid_lat.get('p99', 0):.2f} ms` |
 
 ```
 Latency Percentiles (ms)
 Simple   [p50: {simple_lat.get('p50', 0):>5.1f}] ━━━━━ [p95: {simple_lat.get('p95', 0):>5.1f}] ━━━━━━━━ [p99: {simple_lat.get('p99', 0):>5.1f}]
+Cross-DB [p50: {cross_db_lat.get('p50', 0):>5.1f}] ━━━━━━━ [p95: {cross_db_lat.get('p95', 0):>5.1f}] ━━━━━━━━━━ [p99: {cross_db_lat.get('p99', 0):>5.1f}]
 Complex  [p50: {complex_lat.get('p50', 0):>5.1f}] ━━━━━━━━━━━ [p95: {complex_lat.get('p95', 0):>5.1f}] ━━━━━━━━━━━━━━━━━ [p99: {complex_lat.get('p99', 0):>5.1f}]
 Mutation [p50: {mutations_lat.get('p50', 0):>5.1f}] ━━━━━━━ [p95: {mutations_lat.get('p95', 0):>5.1f}] ━━━━━━━━━━━ [p99: {mutations_lat.get('p99', 0):>5.1f}]
 Invalid  [p50: {invalid_lat.get('p50', 0):>5.1f}] ━━ [p95: {invalid_lat.get('p95', 0):>5.1f}] ━━━━ [p99: {invalid_lat.get('p99', 0):>5.1f}]

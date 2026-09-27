@@ -4,6 +4,7 @@ import { Trend, Counter, Rate } from 'k6/metrics';
 
 // --- Custom Metrics for Benchmark Evaluation ---
 const latencySimple = new Trend('latency_simple_queries', true);
+const latencyCrossDb = new Trend('latency_cross_database_queries', true);
 const latencyComplex = new Trend('latency_complex_queries', true);
 const latencyMutations = new Trend('latency_mutations', true);
 const latencyInvalid = new Trend('latency_invalid_requests', true);
@@ -37,13 +38,16 @@ export const options = {
     },
   },
   thresholds: {
-    // 95% of valid simple queries under 100ms
+    // 95% of valid simple queries under 150ms
     'latency_simple_queries': ['p(95)<150'],
-    // 95% of complex nested queries under 350ms
+    // 95% of cross-database queries under 250ms
+    'latency_cross_database_queries': ['p(95)<250'],
+    // 95% of complex nested queries under 450ms
     'latency_complex_queries': ['p(95)<450'],
     // System should maintain high availability
     'errors_internal_server_error': ['count<5'],
   },
+  summaryTrendStats: ['min', 'med', 'avg', 'p(90)', 'p(95)', 'p(99)', 'max', 'count'],
 };
 
 const ROLES = ['Finance', 'Auditor', 'Manager', 'Admin'];
@@ -108,9 +112,9 @@ export default function () {
   };
 
   // --------------------------------------------------------------------------
-  // 1. 60% Simple Paginierter Query (RLS-Pushdown & Column Masking Check)
+  // 1a. 40% Simple Paginierter Query (PostgreSQL Finance: RLS & Masking)
   // --------------------------------------------------------------------------
-  if (randSelector < 60) {
+  if (randSelector < 40) {
     const first = randInt(10, 50);
     const after = randInt(0, 500);
 
@@ -136,7 +140,48 @@ export default function () {
   }
 
   // --------------------------------------------------------------------------
-  // 2. 20% Komplexer verschachtelter Query (DataLoader, Relationen & Masking)
+  // 1b. 25% Cross-Database Query (PostgreSQL Finance + SQLite HR)
+  // --------------------------------------------------------------------------
+  else if (randSelector < 65) {
+    const first = randInt(10, 30);
+    const after = randInt(0, 100);
+
+    const payload = JSON.stringify({
+      query: `
+        query CrossDatabaseInvoicesAndEmployees($first: Int, $after: Int) {
+          postgresInvoices: table(domain: "finance", name: "invoices", schema: "public", first: $first, after: $after) {
+            tableName
+            totalCount
+            jsonRows
+          }
+          sqliteEmployees: table(domain: "hr", name: "hr_table_1", schema: "dbo", first: $first, after: $after) {
+            tableName
+            totalCount
+            jsonRows
+          }
+          hrTyped: hr {
+            employees(first: $first, after: $after) {
+              tableName
+              totalCount
+              jsonRows
+            }
+          }
+        }
+      `,
+      variables: { first, after },
+    });
+
+    const res = http.post(TARGET_URL, payload, { headers: baseHeaders });
+    check(res, {
+      'cross-db query status is 200': (r) => r.status === 200,
+      'cross-db postgres data present': (r) => r.body.includes('postgresInvoices'),
+      'cross-db sqlite data present': (r) => r.body.includes('sqliteEmployees'),
+    });
+    parseGraphQLResponse(res, latencyCrossDb);
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. 15% Komplexer verschachtelter Query (DataLoader, Relationen & Masking)
   // --------------------------------------------------------------------------
   else if (randSelector < 80) {
     const queryChoice = Math.random();
@@ -313,6 +358,22 @@ export default function () {
 }
 
 // Generate structured summary reports (JSON & CSV)
+function getPercentiles(trend) {
+  if (!trend || !trend.values) return { p50: 0, p90: 0, p95: 0, p99: 0 };
+  const v = trend.values;
+  const p50 = v['med'] !== undefined ? v['med'] : (v['p(50)'] !== undefined ? v['p(50)'] : (v['avg'] || 0));
+  const p90 = v['p(90)'] !== undefined ? v['p(90)'] : p50;
+  const p95 = v['p(95)'] !== undefined ? v['p(95)'] : p90;
+  const p99 = v['p(99)'] !== undefined ? v['p(99)'] : p95;
+  return {
+    p50: Math.round(p50 * 100) / 100,
+    p90: Math.round(p90 * 100) / 100,
+    p95: Math.round(p95 * 100) / 100,
+    p99: Math.round(p99 * 100) / 100,
+  };
+}
+
+// Generate structured summary reports (JSON & CSV)
 export function handleSummary(data) {
   const metrics = data.metrics;
 
@@ -324,30 +385,11 @@ export function handleSummary(data) {
     rps: metrics.http_reqs ? Math.round(metrics.http_reqs.values.rate * 100) / 100 : 0,
     success_rate_percent: metrics.rate_successful_requests ? Math.round(metrics.rate_successful_requests.values.rate * 10000) / 100 : 0,
     latencies_ms: {
-      simple_queries: {
-        p50: metrics.latency_simple_queries ? Math.round(metrics.latency_simple_queries.values['p(50)'] * 100) / 100 : 0,
-        p90: metrics.latency_simple_queries ? Math.round(metrics.latency_simple_queries.values['p(90)'] * 100) / 100 : 0,
-        p95: metrics.latency_simple_queries ? Math.round(metrics.latency_simple_queries.values['p(95)'] * 100) / 100 : 0,
-        p99: metrics.latency_simple_queries ? Math.round(metrics.latency_simple_queries.values['p(99)'] * 100) / 100 : 0,
-      },
-      complex_queries: {
-        p50: metrics.latency_complex_queries ? Math.round(metrics.latency_complex_queries.values['p(50)'] * 100) / 100 : 0,
-        p90: metrics.latency_complex_queries ? Math.round(metrics.latency_complex_queries.values['p(90)'] * 100) / 100 : 0,
-        p95: metrics.latency_complex_queries ? Math.round(metrics.latency_complex_queries.values['p(95)'] * 100) / 100 : 0,
-        p99: metrics.latency_complex_queries ? Math.round(metrics.latency_complex_queries.values['p(99)'] * 100) / 100 : 0,
-      },
-      mutations: {
-        p50: metrics.latency_mutations ? Math.round(metrics.latency_mutations.values['p(50)'] * 100) / 100 : 0,
-        p90: metrics.latency_mutations ? Math.round(metrics.latency_mutations.values['p(90)'] * 100) / 100 : 0,
-        p95: metrics.latency_mutations ? Math.round(metrics.latency_mutations.values['p(95)'] * 100) / 100 : 0,
-        p99: metrics.latency_mutations ? Math.round(metrics.latency_mutations.values['p(99)'] * 100) / 100 : 0,
-      },
-      invalid_requests: {
-        p50: metrics.latency_invalid_requests ? Math.round(metrics.latency_invalid_requests.values['p(50)'] * 100) / 100 : 0,
-        p90: metrics.latency_invalid_requests ? Math.round(metrics.latency_invalid_requests.values['p(90)'] * 100) / 100 : 0,
-        p95: metrics.latency_invalid_requests ? Math.round(metrics.latency_invalid_requests.values['p(95)'] * 100) / 100 : 0,
-        p99: metrics.latency_invalid_requests ? Math.round(metrics.latency_invalid_requests.values['p(99)'] * 100) / 100 : 0,
-      },
+      simple_queries: getPercentiles(metrics.latency_simple_queries),
+      cross_database_queries: getPercentiles(metrics.latency_cross_database_queries),
+      complex_queries: getPercentiles(metrics.latency_complex_queries),
+      mutations: getPercentiles(metrics.latency_mutations),
+      invalid_requests: getPercentiles(metrics.latency_invalid_requests),
     },
     error_counts: {
       rate_limit_exceeded: metrics.errors_rate_limit_exceeded ? metrics.errors_rate_limit_exceeded.values.count : 0,
@@ -368,6 +410,10 @@ export function handleSummary(data) {
     `LatencySimple,p90,${summaryObj.latencies_ms.simple_queries.p90},ms`,
     `LatencySimple,p95,${summaryObj.latencies_ms.simple_queries.p95},ms`,
     `LatencySimple,p99,${summaryObj.latencies_ms.simple_queries.p99},ms`,
+    `LatencyCrossDb,p50,${summaryObj.latencies_ms.cross_database_queries.p50},ms`,
+    `LatencyCrossDb,p90,${summaryObj.latencies_ms.cross_database_queries.p90},ms`,
+    `LatencyCrossDb,p95,${summaryObj.latencies_ms.cross_database_queries.p95},ms`,
+    `LatencyCrossDb,p99,${summaryObj.latencies_ms.cross_database_queries.p99},ms`,
     `LatencyComplex,p50,${summaryObj.latencies_ms.complex_queries.p50},ms`,
     `LatencyComplex,p90,${summaryObj.latencies_ms.complex_queries.p90},ms`,
     `LatencyComplex,p95,${summaryObj.latencies_ms.complex_queries.p95},ms`,
@@ -387,6 +433,6 @@ export function handleSummary(data) {
   return {
     '/results/benchmark-summary.json': JSON.stringify(summaryObj, null, 2),
     '/results/benchmark-summary.csv': csvRows.join('\n'),
-    stdout: `\n=== GqlGateway Benchmark Completed ===\nRPS: ${summaryObj.rps} | Total Requests: ${summaryObj.total_requests} | Success Rate: ${summaryObj.success_rate_percent}%\nSimple Queries Latency: p50=${summaryObj.latencies_ms.simple_queries.p50}ms, p95=${summaryObj.latencies_ms.simple_queries.p95}ms, p99=${summaryObj.latencies_ms.simple_queries.p99}ms\nComplex Queries Latency: p50=${summaryObj.latencies_ms.complex_queries.p50}ms, p95=${summaryObj.latencies_ms.complex_queries.p95}ms, p99=${summaryObj.latencies_ms.complex_queries.p99}ms\nErrors: RATE_LIMIT=${summaryObj.error_counts.rate_limit_exceeded}, FORBIDDEN=${summaryObj.error_counts.forbidden}, TOO_COMPLEX=${summaryObj.error_counts.query_too_complex}, TOO_LARGE=${summaryObj.error_counts.response_too_large}, 500_ERR=${summaryObj.error_counts.internal_server_error}\n=======================================\n`,
+    stdout: `\n=== GqlGateway Benchmark Completed ===\nRPS: ${summaryObj.rps} | Total Requests: ${summaryObj.total_requests} | Success Rate: ${summaryObj.success_rate_percent}%\nSimple Queries Latency: p50=${summaryObj.latencies_ms.simple_queries.p50}ms, p95=${summaryObj.latencies_ms.simple_queries.p95}ms, p99=${summaryObj.latencies_ms.simple_queries.p99}ms\nCross-DB Queries Latency: p50=${summaryObj.latencies_ms.cross_database_queries.p50}ms, p95=${summaryObj.latencies_ms.cross_database_queries.p95}ms, p99=${summaryObj.latencies_ms.cross_database_queries.p99}ms\nComplex Queries Latency: p50=${summaryObj.latencies_ms.complex_queries.p50}ms, p95=${summaryObj.latencies_ms.complex_queries.p95}ms, p99=${summaryObj.latencies_ms.complex_queries.p99}ms\nErrors: RATE_LIMIT=${summaryObj.error_counts.rate_limit_exceeded}, FORBIDDEN=${summaryObj.error_counts.forbidden}, TOO_COMPLEX=${summaryObj.error_counts.query_too_complex}, TOO_LARGE=${summaryObj.error_counts.response_too_large}, 500_ERR=${summaryObj.error_counts.internal_server_error}\n=======================================\n`,
   };
 }

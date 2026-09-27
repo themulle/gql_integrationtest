@@ -17,7 +17,51 @@ def get_db_path():
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     return db_path
 
+def init_hr_sqlite_db():
+    hr_db_path = os.environ.get("HR_DB_PATH", "/data/hr.db")
+    print(f"[governance-seed] Initializing and seeding HR SQLite database at: {hr_db_path}")
+    os.makedirs(os.path.dirname(hr_db_path), exist_ok=True)
+    hr_conn = sqlite3.connect(hr_db_path)
+    hr_cur = hr_conn.cursor()
+    hr_cur.executescript("""
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS hr_table_1 (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        department TEXT NOT NULL,
+        role TEXT NOT NULL,
+        salary REAL NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE VIEW IF NOT EXISTS employees AS SELECT * FROM hr_table_1;
+    """)
+
+    departments = ["Finance", "Engineering", "Marketing", "HR", "Sales", "Operations"]
+    roles_list = ["Specialist", "Senior Specialist", "Team Lead", "Manager", "Director"]
+    first_names = ["Anna", "Bernd", "Claudia", "Dirk", "Elena", "Felix", "Greta", "Hans", "Ines", "Jonas"]
+    last_names = ["Mueller", "Schmidt", "Schneider", "Fischer", "Weber", "Meyer", "Wagner", "Becker", "Schulz", "Hoffmann"]
+
+    records = []
+    base_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    for i in range(1, 5001):
+        fn = first_names[i % len(first_names)]
+        ln = last_names[(i // len(first_names)) % len(last_names)]
+        name = f"{fn} {ln}"
+        email = f"{fn.lower()}.{ln.lower()}.{i}@corp.local"
+        dept = departments[i % len(departments)]
+        r = roles_list[i % len(roles_list)]
+        sal = round(45000.0 + (i * 13.7) % 75000.0, 2)
+        created = (base_time + timedelta(hours=i)).isoformat()
+        records.append((i, name, email, dept, r, sal, created))
+
+    hr_cur.executemany("INSERT OR REPLACE INTO hr_table_1 VALUES (?,?,?,?,?,?,?)", records)
+    hr_conn.commit()
+    hr_conn.close()
+    print(f"[governance-seed] Successfully seeded 5,000 employee records into {hr_db_path}")
+
 def init_governance_db(db_path):
+    init_hr_sqlite_db()
     print(f"[governance-seed] Initializing SQLite database at: {db_path}")
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -341,6 +385,44 @@ def seed_governance_data(conn):
                 ("price", "decimal", False, None),
                 ("sensitive_note", "varchar", True, ("REDACT", None, "[CONFIDENTIAL NOTE]"))
             ]
+        },
+        {
+            "id": "55555555-5555-5555-5555-555555555555",
+            "source_type": "Sqlite",
+            "source_name": "hr",
+            "schema_name": "dbo",
+            "table_name": "hr_table_1",
+            "display_name": "HR Employees Table",
+            "sensitivity": "NORMAL",
+            "four_eyes": 0,
+            "columns": [
+                ("id", "int", False, None),
+                ("name", "varchar", False, None),
+                ("email", "varchar", True, ("MASK_EMAIL", None, None)),
+                ("department", "varchar", False, None),
+                ("role", "varchar", False, None),
+                ("salary", "decimal", True, ("NULLIFY", None, None)),
+                ("created_at", "datetime", False, None)
+            ]
+        },
+        {
+            "id": "66666666-6666-6666-6666-666666666666",
+            "source_type": "Sqlite",
+            "source_name": "hr",
+            "schema_name": "dbo",
+            "table_name": "employees",
+            "display_name": "HR Employees View",
+            "sensitivity": "NORMAL",
+            "four_eyes": 0,
+            "columns": [
+                ("id", "int", False, None),
+                ("name", "varchar", False, None),
+                ("email", "varchar", True, ("MASK_EMAIL", None, None)),
+                ("department", "varchar", False, None),
+                ("role", "varchar", False, None),
+                ("salary", "decimal", True, ("NULLIFY", None, None)),
+                ("created_at", "datetime", False, None)
+            ]
         }
     ]
 
@@ -498,8 +580,68 @@ def seed_governance_data(conn):
             VALUES (?, ?, ?, 'sensitive_note', 2)
         """, (str(uuid.uuid4()), cid, note_col_id))
 
+    # --------------------------------------------------------------------------
+    # CONSENT 6: SQLite HR tables (Cross-Database benchmarking)
+    # --------------------------------------------------------------------------
+    for hr_tid in ["55555555-5555-5555-5555-555555555555", "66666666-6666-6666-6666-666666666666"]:
+        # Group Finance: Allow with RLS (department = 'Finance') and masked email, denied salary
+        cid_grp = str(uuid.uuid5(uuid.UUID(hr_tid), "consent-hr-finance-group"))
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENTS
+            (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+            VALUES (?, ?, NULL, 'Allow', 'Group', 'S-1-5-21-GROUP-FINANCE', NULL, NULL, ?, ?, 0)
+        """, (cid_grp, hr_tid, now_iso, far_future_iso))
+
+        for cname, lvl in [("salary", 3), ("email", 2), ("name", 1), ("department", 1), ("role", 1), ("created_at", 1)]:
+            cur.execute("""
+                INSERT OR REPLACE INTO CONSENT_COLUMN_RULES (id, consent_id, table_column_id, column_name, access_level)
+                VALUES (?, ?, ?, ?, ?)
+            """, (str(uuid.uuid4()), cid_grp, col_id_map[(hr_tid, cname)], cname, lvl))
+
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENT_ROW_FILTERS
+            (id, consent_id, filter_group, table_column_id, column_name, operator, value_type, value_json, value_source, filter_type)
+            VALUES (?, ?, 1, ?, 'department', 'EQ', 'STRING', ?, 'STATIC', 0)
+        """, (str(uuid.uuid4()), cid_grp, col_id_map[(hr_tid, "department")], json.dumps("Finance")))
+
+        # Role FinanceManager: Allow full access
+        cid_mgr = str(uuid.uuid5(uuid.UUID(hr_tid), "consent-hr-manager-role"))
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENTS
+            (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+            VALUES (?, ?, NULL, 'Allow', 'Role', NULL, ?, 'FinanceManager', ?, ?, 0)
+        """, (cid_mgr, hr_tid, role_map["FinanceManager"], now_iso, far_future_iso))
+
+        # Role FinanceAuditor: Allow with masked salary & email
+        cid_aud = str(uuid.uuid5(uuid.UUID(hr_tid), "consent-hr-auditor-role"))
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENTS
+            (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+            VALUES (?, ?, NULL, 'Allow', 'Role', NULL, ?, 'FinanceAuditor', ?, ?, 0)
+        """, (cid_aud, hr_tid, role_map["FinanceAuditor"], now_iso, far_future_iso))
+        for cname in ["salary", "email"]:
+            cur.execute("""
+                INSERT OR REPLACE INTO CONSENT_COLUMN_RULES (id, consent_id, table_column_id, column_name, access_level)
+                VALUES (?, ?, ?, ?, 2)
+            """, (str(uuid.uuid4()), cid_aud, col_id_map[(hr_tid, cname)], cname))
+
+        # Blocked User: Hard Deny
+        cid_blk = str(uuid.uuid5(uuid.UUID(hr_tid), "consent-hr-blocked-user"))
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENTS
+            (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+            VALUES (?, ?, NULL, 'Deny', 'User', 'S-1-5-21-FORWARD-USER_BLOCKED', NULL, NULL, ?, ?, 0)
+        """, (cid_blk, hr_tid, now_iso, far_future_iso))
+
     conn.commit()
 
 if __name__ == "__main__":
     db_file = get_db_path()
     init_governance_db(db_file)
+    try:
+        os.chmod(db_file, 0o666)
+        hr_file = os.environ.get("HR_DB_PATH", "/data/hr.db")
+        if os.path.exists(hr_file):
+            os.chmod(hr_file, 0o666)
+    except Exception as e:
+        print(f"[governance-seed] Warning chmod: {e}")
