@@ -21,6 +21,7 @@ const TARGET_URL = __ENV.TARGET_URL || 'http://reverse-proxy:8080/graphql';
 const VUS = parseInt(__ENV.VUS || '50', 10);
 const DURATION_STEADY = __ENV.DURATION_STEADY || '3m';
 const DURATION_RAMP = __ENV.DURATION_RAMP || '20s';
+const PACING_SLEEP = __ENV.PACING_SLEEP === 'true';
 
 export const options = {
   scenarios: {
@@ -305,8 +306,10 @@ export default function () {
     }
   }
 
-  // Realistic human pacing / think time between queries
-  sleep(0.05 + Math.random() * 0.15);
+  // Realistic human pacing / think time between queries (skipped during high-throughput stress testing)
+  if (PACING_SLEEP) {
+    sleep(0.05 + Math.random() * 0.15);
+  }
 }
 
 // Generate structured summary reports (JSON & CSV)

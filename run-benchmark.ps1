@@ -26,7 +26,8 @@ param(
     [string]$Duration = "3m",
     [int]$SeedRows = 200000,
     [bool]$Chaos = $true,
-    [bool]$KeepRunning = $false
+    [bool]$KeepRunning = $false,
+    [bool]$Pacing = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,6 +121,7 @@ $env:RESULTS_DIR = $resultsDir
 $env:SEED_ROW_COUNT = $SeedRows.ToString()
 $env:VUS = $VUs.ToString()
 $env:DURATION_STEADY = $Duration
+$env:PACING_SLEEP = if ($Pacing) { "true" } else { "false" }
 
 # Cleanup trap to ensure graceful teardown on exit or error
 $script:teardownNeeded = $true

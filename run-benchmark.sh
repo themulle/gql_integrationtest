@@ -41,6 +41,7 @@ done
 
 export VUS DURATION_STEADY SEED_ROW_COUNT
 export COMPOSE_FILE="${COMPOSE_FILE:-podman-compose.yaml}"
+export PACING_SLEEP="${PACING_SLEEP:-false}"
 
 log() { echo -e "\033[1;36m[GqlGateway Bench]\033[0m $1"; }
 log_success() { echo -e "\033[1;32m[GqlGateway Bench]\033[0m $1"; }

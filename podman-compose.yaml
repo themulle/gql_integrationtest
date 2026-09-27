@@ -151,6 +151,7 @@ services:
       VUS: ${VUS:-50}
       DURATION_STEADY: ${DURATION_STEADY:-3m}
       DURATION_RAMP: ${DURATION_RAMP:-20s}
+      PACING_SLEEP: ${PACING_SLEEP:-false}
     volumes:
       - ./results:/results:z
     depends_on:
