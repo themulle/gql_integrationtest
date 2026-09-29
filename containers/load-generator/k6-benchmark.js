@@ -8,6 +8,7 @@ const latencyCrossDb = new Trend('latency_cross_database_queries', true);
 const latencyComplex = new Trend('latency_complex_queries', true);
 const latencyMutations = new Trend('latency_mutations', true);
 const latencyInvalid = new Trend('latency_invalid_requests', true);
+const latencyLakehouse = new Trend('latency_lakehouse_iceberg_queries', true);
 
 const rateLimitExceededErrors = new Counter('errors_rate_limit_exceeded');
 const forbiddenErrors = new Counter('errors_forbidden');
@@ -23,6 +24,9 @@ const VUS = parseInt(__ENV.VUS || '50', 10);
 const DURATION_STEADY = __ENV.DURATION_STEADY || '3m';
 const DURATION_RAMP = __ENV.DURATION_RAMP || '20s';
 const PACING_SLEEP = __ENV.PACING_SLEEP === 'true';
+const LAKEHOUSE_ENABLED = __ENV.ENABLE_LAKEHOUSE === 'true';
+const SQLSERVER_ENABLED = __ENV.ENABLE_SQLSERVER !== 'false';
+const ENTERPRISE_ENABLED = __ENV.ENABLE_ENTERPRISE === 'true';
 
 export const options = {
   scenarios: {
@@ -44,6 +48,8 @@ export const options = {
     'latency_cross_database_queries': ['p(95)<250'],
     // 95% of complex nested queries under 450ms
     'latency_complex_queries': ['p(95)<450'],
+    // 95% of Lakehouse Iceberg S3 queries under 350ms
+    'latency_lakehouse_iceberg_queries': ['p(95)<350'],
     // System should maintain high availability
     'errors_internal_server_error': ['count<5'],
   },
@@ -114,40 +120,65 @@ export default function () {
   // --------------------------------------------------------------------------
   // 1a. 40% Simple Paginierter Query (PostgreSQL Finance: RLS & Masking)
   // --------------------------------------------------------------------------
+  // 1a. Simple Paged Query (PostgreSQL Finance: RLS & Masking) / Lakehouse Iceberg S3
+  // --------------------------------------------------------------------------
   if (randSelector < 40) {
-    const first = randInt(10, 50);
-    const after = randInt(0, 500);
-
-    const payload = JSON.stringify({
-      query: `
-        query SimpleInvoices($first: Int, $after: Int) {
-          table(domain: "finance", name: "invoices", schema: "public", first: $first, after: $after) {
-            tableName
-            totalCount
-            jsonRows
+    if (LAKEHOUSE_ENABLED && Math.random() < 0.3) {
+      const first = randInt(5, 20);
+      const payload = JSON.stringify({
+        query: `
+          query LakehouseOrders($first: Int) {
+            table(domain: "lakehouse", name: "orders", schema: "dbo", first: $first) {
+              tableName
+              totalCount
+              jsonRows
+            }
           }
-        }
-      `,
-      variables: { first, after },
-    });
+        `,
+        variables: { first },
+      });
 
-    const res = http.post(TARGET_URL, payload, { headers: baseHeaders });
-    check(res, {
-      'simple query status is 200': (r) => r.status === 200,
-      'simple query returns jsonRows': (r) => r.body.includes('jsonRows'),
-    });
-    parseGraphQLResponse(res, latencySimple);
+      const res = http.post(TARGET_URL, payload, { headers: baseHeaders });
+      check(res, {
+        'lakehouse query status is 200': (r) => r.status === 200,
+        'lakehouse query returns jsonRows': (r) => r.body.includes('jsonRows'),
+      });
+      parseGraphQLResponse(res, latencyLakehouse);
+    } else {
+      const first = randInt(10, 50);
+      const after = randInt(0, 500);
+
+      const payload = JSON.stringify({
+        query: `
+          query SimpleInvoices($first: Int, $after: Int) {
+            table(domain: "finance", name: "invoices", schema: "public", first: $first, after: $after) {
+              tableName
+              totalCount
+              jsonRows
+            }
+          }
+        `,
+        variables: { first, after },
+      });
+
+      const res = http.post(TARGET_URL, payload, { headers: baseHeaders });
+      check(res, {
+        'simple query status is 200': (r) => r.status === 200,
+        'simple query returns jsonRows': (r) => r.body.includes('jsonRows'),
+      });
+      parseGraphQLResponse(res, latencySimple);
+    }
   }
 
   // --------------------------------------------------------------------------
-  // 1b. 25% 3-Way Cross-Database Query (PostgreSQL Finance + SQLite HR + SQL Server CRM)
+  // 1b. 25% Cross-Database Query (PostgreSQL Finance + SQLite HR [+ SQL Server CRM])
   // --------------------------------------------------------------------------
   else if (randSelector < 65) {
     const first = randInt(10, 30);
     const after = randInt(0, 100);
 
-    const payload = JSON.stringify({
-      query: `
+    const query = SQLSERVER_ENABLED
+      ? `
         query CrossDatabaseTriDb($first: Int, $after: Int) {
           postgresInvoices: table(domain: "finance", name: "invoices", schema: "public", first: $first, after: $after) {
             tableName
@@ -165,17 +196,33 @@ export default function () {
             jsonRows
           }
         }
-      `,
-      variables: { first, after },
-    });
+      `
+      : `
+        query CrossDatabaseBiDb($first: Int, $after: Int) {
+          postgresInvoices: table(domain: "finance", name: "invoices", schema: "public", first: $first, after: $after) {
+            tableName
+            totalCount
+            jsonRows
+          }
+          sqliteEmployees: table(domain: "hr", name: "hr_table_1", schema: "dbo", first: $first, after: $after) {
+            tableName
+            totalCount
+            jsonRows
+          }
+        }
+      `;
 
+    const payload = JSON.stringify({ query, variables: { first, after } });
     const res = http.post(TARGET_URL, payload, { headers: baseHeaders });
-    check(res, {
+    const checks = {
       'cross-db query status is 200': (r) => r.status === 200,
       'cross-db postgres data present': (r) => r.body.includes('postgresInvoices'),
       'cross-db sqlite data present': (r) => r.body.includes('sqliteEmployees'),
-      'cross-db sqlserver data present': (r) => r.body.includes('sqlServerOrders'),
-    });
+    };
+    if (SQLSERVER_ENABLED) {
+      checks['cross-db sqlserver data present'] = (r) => r.body.includes('sqlServerOrders');
+    }
+    check(res, checks);
     parseGraphQLResponse(res, latencyCrossDb);
   }
 

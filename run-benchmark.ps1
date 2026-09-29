@@ -17,11 +17,15 @@
 .PARAMETER KeepRunning
     Keep containers running after benchmark for interactive inspection (default: $false).
 .EXAMPLE
-    .\run-benchmark.ps1 -VUs 50 -Duration "3m" -Chaos $true
+    .\run-benchmark.ps1 -Scenario full -VUs 50 -Duration "3m" -Chaos $true
+    .\run-benchmark.ps1 -Scenario minimal -Duration "1m"
+    .\run-benchmark.ps1 -Scenario lakehouse -Duration "2m"
 #>
 
 [CmdletBinding()]
 param(
+    [ValidateSet("minimal", "core", "lakehouse", "enterprise", "relational", "full")]
+    [string]$Scenario = "full",
     [int]$VUs = 50,
     [string]$Duration = "3m",
     [int]$SeedRows = 200000,
@@ -32,6 +36,8 @@ param(
     [int]$GatewayPort = 5050
 )
 
+$Scenario = $Scenario.ToLowerInvariant()
+if ($Scenario -eq "core") { $Scenario = "minimal" }
 $Chaos = if ($Chaos -is [bool]) { $Chaos } elseif ($Chaos -in @("0", "false", "$false")) { $false } else { $true }
 $KeepRunning = if ($KeepRunning -is [bool]) { $KeepRunning } elseif ($KeepRunning -in @("1", "true", "$true")) { $true } else { $false }
 $Pacing = if ($Pacing -is [bool]) { $Pacing } elseif ($Pacing -in @("1", "true", "$true")) { $true } else { $false }
@@ -145,6 +151,105 @@ $env:PACING_SLEEP = if ($Pacing) { "true" } else { "false" }
 $env:REVERSE_PROXY_PORT = $ProxyPort.ToString()
 $env:GATEWAY_PORT = $GatewayPort.ToString()
 
+# Scenario Configuration and Memory Footprint
+$scenarioInfo = switch ($Scenario) {
+    "minimal" {
+        @{
+            RamEstimate = "~1.5 GB"
+            Services = "postgres redis governance-seed gqlgateway-api reverse-proxy"
+            EnableLakehouse = "false"
+            EnableEnterprise = "false"
+            EnableSqlServer = "false"
+            Profiles = ""
+            Description = "Minimal Core (PostgreSQL + SQLite + Redis)"
+        }
+    }
+    "lakehouse" {
+        @{
+            RamEstimate = "~1.8 GB"
+            Services = "postgres redis governance-seed minio lakehouse-seed gqlgateway-api reverse-proxy"
+            EnableLakehouse = "true"
+            EnableEnterprise = "false"
+            EnableSqlServer = "false"
+            Profiles = "lakehouse"
+            Description = "Apache Iceberg Lakehouse on MinIO (S3)"
+        }
+    }
+    "enterprise" {
+        @{
+            RamEstimate = "~1.8 GB"
+            Services = "postgres redis governance-seed mock-extensions gqlgateway-api reverse-proxy"
+            EnableLakehouse = "false"
+            EnableEnterprise = "true"
+            EnableSqlServer = "false"
+            Profiles = "enterprise"
+            Description = "Enterprise Extensions (Purview, Collibra, Alation, OpenMetadata, ITSM, dbt)"
+        }
+    }
+    "azure" {
+        @{
+            RamEstimate = "~1.7 GB"
+            Services = "postgres redis governance-seed azurite mock-extensions gqlgateway-api reverse-proxy"
+            EnableLakehouse = "true"
+            EnableEnterprise = "false"
+            EnableSqlServer = "false"
+            Profiles = "azure,enterprise"
+            Description = "Lakehouse on Azure Blob / ADLS Gen2 (Azurite) + Mock Extensions"
+        }
+    }
+    "relational" {
+        @{
+            RamEstimate = "~2.0 GB"
+            Services = "postgres redis governance-seed sqlserver gqlgateway-api reverse-proxy"
+            EnableLakehouse = "false"
+            EnableEnterprise = "false"
+            EnableSqlServer = "true"
+            Profiles = "relational"
+            Description = "Multi-Engine Relational (Postgres + SQLite + Azure SQL Edge)"
+        }
+    }
+    "openmetadata-real" {
+        @{
+            RamEstimate = "~4.5 GB"
+            Services = "postgres redis governance-seed opensearch openmetadata-server gqlgateway-api reverse-proxy"
+            EnableLakehouse = "false"
+            EnableEnterprise = "true"
+            EnableSqlServer = "false"
+            Profiles = ""
+            ExtraComposeFile = "podman-compose.openmetadata.yaml"
+            Description = "Official OpenMetadata Stack (OpenMetadata Server + OpenSearch Cluster)"
+        }
+    }
+    default { # "full"
+        @{
+            RamEstimate = "~3.5 GB"
+            Services = "postgres redis governance-seed sqlserver minio lakehouse-seed mock-extensions gqlgateway-api reverse-proxy prometheus grafana"
+            EnableLakehouse = "true"
+            EnableEnterprise = "true"
+            EnableSqlServer = "true"
+            Profiles = "full,relational,lakehouse,enterprise,monitoring"
+            Description = "Full Suite (All Relational, Lakehouse & Enterprise Extensions)"
+        }
+    }
+}
+
+Write-Info "Selected Scenario: '$Scenario' ($($scenarioInfo.Description))"
+Write-Info "Estimated Memory Footprint: $($scenarioInfo.RamEstimate) RAM"
+
+if ($scenarioInfo.ExtraComposeFile) {
+    $composeCmd = "$composeCmd -f $($scenarioInfo.ExtraComposeFile)"
+    Write-Info "Appending modular compose file: $($scenarioInfo.ExtraComposeFile)"
+}
+
+$env:BENCH_SCENARIO = $Scenario
+$env:ENABLE_LAKEHOUSE = $scenarioInfo.EnableLakehouse
+$env:ENABLE_ENTERPRISE = $scenarioInfo.EnableEnterprise
+$env:ENABLE_SQLSERVER = $scenarioInfo.EnableSqlServer
+if ($scenarioInfo.Profiles) {
+    $env:COMPOSE_PROFILES = $scenarioInfo.Profiles
+}
+$servicesToLaunch = $scenarioInfo.Services
+
 # Cleanup trap to ensure graceful teardown on exit or error
 $script:teardownNeeded = $true
 function Clean-Teardown {
@@ -156,9 +261,9 @@ function Clean-Teardown {
 }
 
 try {
-    # 3. Build & Start Infrastructure Services
-    Write-Info "Building and launching infrastructure services..."
-    Invoke-Expression "$composeCmd up -d --build postgres redis governance-seed sqlserver gqlgateway-api reverse-proxy prometheus grafana"
+    # 3. Build & Start Infrastructure Services for active scenario
+    Write-Info "Building and launching services for scenario '$Scenario'..."
+    Invoke-Expression "$composeCmd up -d --build $servicesToLaunch"
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Failed to build or start infrastructure services. Aborting benchmark."
         exit 1
@@ -203,7 +308,16 @@ try {
         exit 1
     }
     $env:TARGET_PROXY = "http://${targetHost}:${ProxyPort}"
-    Write-Success "All services healthy! (Reverse Proxy: ${env:TARGET_PROXY}, Gateway: :${GatewayPort}, Grafana: :3000, Prometheus: :9090)"
+    Write-Success "All services healthy! (Reverse Proxy: ${env:TARGET_PROXY}, Gateway: :${GatewayPort})"
+
+    # 4b. Execute Extension Integration Verification (Lakehouse, OData, Catalogs, ITSM, dbt)
+    Write-Info "Executing GqlGateway Extensions integration tests (Scenario: '$Scenario')..."
+    $pythonCmd = Get-Command "python" -ErrorAction SilentlyContinue
+    if ($pythonCmd) {
+        & python (Join-Path $ScriptDir "scripts\test_extensions.py")
+    } else {
+        Invoke-Expression "podman run --rm --net=gateway-bench-net -e TARGET_PROXY=${env:TARGET_PROXY} -e BENCH_SCENARIO=${env:BENCH_SCENARIO} -e ENABLE_LAKEHOUSE=${env:ENABLE_LAKEHOUSE} -e ENABLE_ENTERPRISE=${env:ENABLE_ENTERPRISE} -v ${resultsDir}:/results:z -v ${ScriptDir}/scripts:/scripts:z docker.io/library/python:3.12-alpine python /scripts/test_extensions.py"
+    }
 
     # 5. Execute k6 Load Generator
     Write-Info "Starting k6 Load Generator ($VUs VUs, Steady State: $Duration)..."

@@ -49,3 +49,9 @@ CREATE OR REPLACE VIEW dbo.hr_table_1 AS
     SELECT id, name, salary AS amount, email, created_at 
     FROM public.invoices 
     WHERE department = 'HR';
+
+-- OpenMetadata database creation for optional openmetadata-server container
+SELECT 'CREATE DATABASE openmetadata_db OWNER gqluser'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'openmetadata_db')\gexec
+GRANT ALL PRIVILEGES ON DATABASE openmetadata_db TO gqluser;
+

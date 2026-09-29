@@ -177,6 +177,22 @@ A planned chaos injection was performed during steady-state execution: the Redis
 *(Chaos test was skipped or not enabled for this run. To execute: `./run-benchmark.ps1 -Chaos $true` or `make chaos`)*
 """
 
+    ext_data = load_json(os.path.join(RESULTS_DIR, "extensions-test-summary.json"))
+    if ext_data:
+        report += f"""
+---
+
+## 5b. GqlGateway.Extensions Integration Verification
+
+Active Scenario: **`{ext_data.get('scenario', 'full')}`** | Overall Status: **{'PASSED' if ext_data.get('overall_passed') else 'FAILED'}**
+
+| Extension Component | Protocol / Engine | Test Verification Status |
+| :--- | :--- | :---: |
+"""
+        for comp, passed in ext_data.get("results", {}).items():
+            st = "PASSED" if passed else "FAILED"
+            report += f"| **{comp}** | In-Process Adapter & Outbound I/O | {st} |\n"
+
     report += f"""
 ---
 

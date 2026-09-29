@@ -443,6 +443,24 @@ def seed_governance_data(conn):
                 ("status", "varchar", False, None),
                 ("created_at", "datetime", False, None)
             ]
+        },
+        {
+            "id": "88888888-8888-8888-8888-888888888888",
+            "source_type": "Lakehouse",
+            "source_name": "lakehouse",
+            "schema_name": "dbo",
+            "table_name": "orders",
+            "display_name": "Lakehouse Iceberg Orders",
+            "sensitivity": "HIGH",
+            "four_eyes": 0,
+            "data_source_type": 3,
+            "columns": [
+                ("orderId", "varchar", False, None),
+                ("tenantId", "varchar", False, None),
+                ("customerEmail", "varchar", True, ("MASK_EMAIL", None, None)),
+                ("amount", "decimal", False, None),
+                ("orderDate", "varchar", False, None)
+            ]
         }
     ]
 
@@ -452,8 +470,8 @@ def seed_governance_data(conn):
         cur.execute("""
             INSERT OR REPLACE INTO TABLES 
             (id, source_type, source_name, schema_name, table_name, display_name, sensitivity, requires_four_eyes, is_active, data_source_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
-        """, (t["id"], t["source_type"], t["source_name"], t["schema_name"], t["table_name"], t["display_name"], t["sensitivity"], t["four_eyes"]))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        """, (t["id"], t["source_type"], t["source_name"], t["schema_name"], t["table_name"], t["display_name"], t["sensitivity"], t["four_eyes"], t.get("data_source_type", 0)))
 
         # Policy Epoch
         cur.execute("""
@@ -704,6 +722,52 @@ def seed_governance_data(conn):
         (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
         VALUES (?, ?, NULL, 'Deny', 'User', 'S-1-5-21-FORWARD-USER_BLOCKED', NULL, NULL, ?, ?, 0)
     """, (cid_crm_blk, crm_tid, now_iso, far_future_iso))
+
+    # --------------------------------------------------------------------------
+    # CONSENT 8: Apache Iceberg Lakehouse orders table
+    # --------------------------------------------------------------------------
+    lake_tid = "88888888-8888-8888-8888-888888888888"
+    # Group Finance: Allow with masked customerEmail
+    cid_lake_grp = str(uuid.uuid5(uuid.UUID(lake_tid), "consent-lake-finance-group"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Allow', 'Group', 'S-1-5-21-GROUP-FINANCE', NULL, NULL, ?, ?, 0)
+    """, (cid_lake_grp, lake_tid, now_iso, far_future_iso))
+
+    for cname, lvl in [("customerEmail", 2), ("orderId", 1), ("tenantId", 1), ("amount", 1), ("orderDate", 1)]:
+        cur.execute("""
+            INSERT OR REPLACE INTO CONSENT_COLUMN_RULES (id, consent_id, table_column_id, column_name, access_level)
+            VALUES (?, ?, ?, ?, ?)
+        """, (str(uuid.uuid4()), cid_lake_grp, col_id_map[(lake_tid, cname)], cname, lvl))
+
+    # Role FinanceManager: Allow full access
+    cid_lake_mgr = str(uuid.uuid5(uuid.UUID(lake_tid), "consent-lake-manager-role"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Allow', 'Role', NULL, ?, 'FinanceManager', ?, ?, 0)
+    """, (cid_lake_mgr, lake_tid, role_map["FinanceManager"], now_iso, far_future_iso))
+
+    # Role FinanceAuditor: Allow with masked customerEmail
+    cid_lake_aud = str(uuid.uuid5(uuid.UUID(lake_tid), "consent-lake-auditor-role"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Allow', 'Role', NULL, ?, 'FinanceAuditor', ?, ?, 0)
+    """, (cid_lake_aud, lake_tid, role_map["FinanceAuditor"], now_iso, far_future_iso))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENT_COLUMN_RULES (id, consent_id, table_column_id, column_name, access_level)
+        VALUES (?, ?, ?, 'customerEmail', 2)
+    """, (str(uuid.uuid4()), cid_lake_aud, col_id_map[(lake_tid, "customerEmail")]))
+
+    # Blocked User: Hard Deny
+    cid_lake_blk = str(uuid.uuid5(uuid.UUID(lake_tid), "consent-lake-blocked-user"))
+    cur.execute("""
+        INSERT OR REPLACE INTO CONSENTS
+        (id, table_id, consent_request_id, effect, grantee_type, grantee_sid, role_id, role_name, valid_from, valid_to, is_revoked)
+        VALUES (?, ?, NULL, 'Deny', 'User', 'S-1-5-21-FORWARD-USER_BLOCKED', NULL, NULL, ?, ?, 0)
+    """, (cid_lake_blk, lake_tid, now_iso, far_future_iso))
 
     conn.commit()
 

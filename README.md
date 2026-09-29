@@ -27,39 +27,72 @@ Vollständige, reproduzierbare Last- und Latenz-Benchmark-Umgebung für das Proj
 ```
 
 ### Enthaltene Services in der `podman-compose.yaml`
-1. **`gqlgateway-api`**: Multi-Stage Build (`Containerfile`) mit .NET 10 Runtime auf Port 5050. Startet in gehärteter Production-Konfiguration: ForwardAuth aktiv, TestAuthHandler deaktiviert, Token-Bucket Rate Limiter aktiv, Postgres-, SQLite-, SQL Server- und Redis-Anbindung.
+1. **`gqlgateway-api`**: Multi-Stage Build (`Containerfile`) mit .NET 10 Runtime auf Port 5050. Startet in gehärteter Production-Konfiguration: ForwardAuth aktiv, TestAuthHandler deaktiviert, Token-Bucket Rate Limiter aktiv, Postgres-, SQLite-, SQL Server- und Redis-Anbindung sowie dynamisch aktivierte Extensions.
 2. **`postgres`**: Enterprise-RDBMS für Invoices & Line Items (Domain `finance`). Seeding mit konfigurierbaren Zeilenmengen (Standard: 200.000 Zeilen) inkl. sensibler Daten (`email`, `iban`, `salary`).
 3. **`sqlserver`**: Azure SQL Edge Engine (`mcr.microsoft.com/azure-sql-edge:latest`) für CRM Sales Orders (Domain `crm`). Leichtgewichtige MS SQL Server-Engine (~500 MB RAM) zur Validierung von T-SQL-Dialekten (`ORDER BY ... OFFSET ... ROWS FETCH NEXT ... ROWS ONLY`) und sensiblen E-Mail-Maskierungen.
-4. **`governance-seed`**: Init-Container (`Containerfile`), der die SQLite-Governance-DB (`/data/governance.db`) und die SQLite-HR-Datenbank (`/data/hr.db`, 5.000 Mitarbeiter) initialisiert, inkl. Rollen, Gruppen, Data-Ownern, Masking-Regeln und RLS-Row-Filtern.
+4. **`governance-seed`**: Init-Container (`Containerfile`), der die SQLite-Governance-DB (`/data/governance.db`), die SQLite-HR-Datenbank (`/data/hr.db`, 5.000 Mitarbeiter) und den Lakehouse Table-Katalog initialisiert, inkl. Rollen, Gruppen, Data-Ownern, Masking-Regeln und RLS-Row-Filtern.
 5. **`redis`**: Cache-Store für `ConsentCacheService` (Epoch Invalidation Pub/Sub), `RedisRateLimiterService` (Token-Bucket Lua-Scripts), `RedisIdempotencyStore` und EventBus.
-6. **`reverse-proxy`**: Nginx ForwardAuth Gateway auf Host-Port 8082. Injiziert `X-Forwarded-Secret` und leitet Benutzeridentitäten (`X-Forwarded-User`, `X-Forwarded-Roles`, `X-Forwarded-Groups`) unter echten Netzwerkbedingungen an das Gateway weiter.
-7. **`load-generator`**: k6-Container mit parametrisierbarem Lastprofil (Ramp-up → Steady State → Ramp-down) und 3-Way Cross-Database GraphQL-Abfragen (PostgreSQL + SQLite + SQL Server).
-8. **`prometheus` & `grafana`**: Automatisches Scraping von Gateway-Metriken (`/metrics`) und vorkonfiguriertes Grafana-Dashboard (`http://localhost:3000`).
+6. **`minio` & `lakehouse-seed`**: MinIO S3 Object Storage (`minio/minio`) und Ingestion-Container zur Bereitstellung von **Apache Iceberg v2** Metadaten (`v2.metadata.json`), Manifest-Listen und Parquet-Dateien für die Lakehouse-Extension.
+7. **`azurite`**: Offizieller Microsoft Azure Storage Emulator (`mcr.microsoft.com/azure-storage/azurite`) zur Bereitstellung von Azure Blob Storage / ADLS Gen2 für den Lakehouse-Konnektor.
+8. **`mock-extensions`**: Schlanker Mock-Container (< 20 MB RAM) für alle externen Enterprise-Systeme aus `gql_extensions`:
+   - **Multi-Catalog Governance**: **Microsoft Purview** (Apache Atlas REST), **Collibra Data Intelligence** (REST Core v2), **Alation** (Integration API v2), **OpenMetadata** (REST v1 & Realtime-Webhooks) sowie automatisierte DSGVO Art. 9 Tag-Erkennung.
+   - **ITSM Two-Phase Approvals**: **ServiceNow** Table API (`/api/now/table/...`) & **Jira Service Management** REST API (`/rest/api/2/issue`) inkl. HMAC-SHA256 Webhook Verification.
+   - **dbt Integration**: Streaming-Auslieferung von `manifest.json`, Model Contract Enforcement & Breaking-Change CI Gate (`/api/extensions/dbt/validate-contract`), Governance Proposal Lifecycle und Exposures Publishing (`/api/extensions/dbt/exposures`).
+9. **`reverse-proxy`**: Nginx ForwardAuth Gateway auf Host-Port 8082. Injiziert `X-Forwarded-Secret` und leitet Benutzeridentitäten (`X-Forwarded-User`, `X-Forwarded-Roles`, `X-Forwarded-Groups`) unter echten Netzwerkbedingungen an das Gateway weiter.
+10. **`load-generator`**: k6-Container mit parametrisierbarem Lastprofil (Ramp-up → Steady State → Ramp-down) und dynamischem Query-Mix (PostgreSQL + SQLite + SQL Server + Apache Iceberg Lakehouse).
+11. **`prometheus` & `grafana`**: Automatisches Scraping von Gateway-Metriken (`/metrics`) und vorkonfiguriertes Grafana-Dashboard (`http://localhost:3000`).
 
 ---
 
-## 2. Systemvoraussetzungen
+## 2. Speicher-Szenarien (Memory-Optimierung)
+
+Um Ressourcen auf Entwicklungsrechnern und CI/CD-Runnern zu schonen, stehen **6 dedizierte Szenarien** zur Verfügung:
+
+| Szenario | Flag (`-Scenario` / `--scenario`) | Enthaltene Container / Extensions | Geschätzter RAM-Bedarf | Primärer Testfokus |
+| :--- | :--- | :--- | :---: | :--- |
+| **`minimal`** | `-Scenario minimal` | Postgres, Redis, Governance-Seed, Gateway, Reverse-Proxy | **~1.5 GB** | Kern-RLS, Consent-Cache, Token Bucket Rate Limiter, Invoices & HR, OData v4 |
+| **`lakehouse`**| `-Scenario lakehouse`| Minimal + MinIO + Lakehouse-Seed (Iceberg S3) | **~1.8 GB** | Apache Iceberg v2 Scans, Vectorized Partition Pruning, S3 SigV4 Streaming |
+| **`azure`** | `-Scenario azure` | Minimal + Azurite + Mock-Extensions (Azure Blob Storage) | **~1.7 GB** | Apache Iceberg v2 auf Azure Blob Storage / ADLS Gen2 |
+| **`enterprise`**| `-Scenario enterprise`| Minimal + Mock-Extensions (Purview, Collibra, Alation, OpenMetadata, ITSM, dbt) | **~1.8 GB** | Multi-Catalog Sync & Webhooks, ServiceNow/Jira Two-Phase Approvals, dbt Contracts |
+| **`relational`**| `-Scenario relational`| Minimal + Azure SQL Edge (`sqlserver`) | **~2.0 GB** | 3-Way Cross-Database Queries (PostgreSQL + SQLite + MS SQL Server) |
+| **`openmetadata-real`**| `-Scenario openmetadata-real`| Minimal + Echter OpenMetadata Server + OpenSearch Cluster | **~4.5 GB** | Echter OpenMetadata 1.5 Server Stack inkl. Web-UI (`http://localhost:8585`) |
+| **`full`** *(Default)* | `-Scenario full` | **Alle Container**: Minimal + SQL Server + MinIO + Mock-Extensions + Monitoring | **~3.5 GB** | Vollständiger E2E-Benchmark aller relationalen Quellen, Extensions und Dashboards |
+
+---
+
+## 3. Systemvoraussetzungen
 
 - **Betriebssystem**: Windows 10/11 (mit Podman Desktop / WSL2) oder Linux (RHEL, Fedora, Ubuntu, Debian) oder macOS.
-- **Podman**: Version 4.4+ oder 5.x (`podman compose` oder `podman-compose`).
+- **Podman**: Version 4.4+ oder 5.x / 6.x (`podman compose` oder `podman-compose`).
 - **Hardware-Empfehlung**:
-  - Mindestens: 4 CPU-Kerne, 8 GB RAM.
-  - Empfohlen für Benchmark mit 50 VUs & 200k Zeilen: 8 CPU-Kerne, 16 GB RAM.
+  - Für `minimal` / `lakehouse` / `enterprise`: 4 CPU-Kerne, 4–8 GB RAM.
+  - Für `full` (alle Extensions & k6 Lasttest): 8 CPU-Kerne, 12–16 GB RAM.
 
 ---
 
-## 3. Schnellstart (One-Click)
+## 4. Schnellstart (One-Click)
 
 ### Unter Windows (PowerShell)
-Startet die gesamte Umgebung mit Standardparametern (50 VUs, 3 Minuten Steady State, 200.000 Zeilen Seed-Daten, Redis-Chaos-Test):
-
+Startet die gesamte Umgebung (Szenario `full`):
 ```powershell
 .\run-benchmark.ps1
 ```
 
+Speicheroptimierter Start einzelner Szenarien:
+```powershell
+# Nur Lakehouse Extension (Iceberg auf MinIO S3, ~1.8 GB RAM)
+.\run-benchmark.ps1 -Scenario lakehouse
+
+# Nur Enterprise Extensions (OpenMetadata, ServiceNow, Jira, dbt, ~1.8 GB RAM)
+.\run-benchmark.ps1 -Scenario enterprise
+
+# Minimales Kern-Gateway ohne schwere Zusatzcontainer (~1.5 GB RAM)
+.\run-benchmark.ps1 -Scenario minimal -Duration "1m"
+```
+
 Mit individuellen Parametern:
 ```powershell
-.\run-benchmark.ps1 -VUs 100 -Duration "5m" -SeedRows 500000 -Chaos $true
+.\run-benchmark.ps1 -Scenario full -VUs 100 -Duration "5m" -SeedRows 500000 -Chaos $true
 ```
 
 Um die Container nach dem Test für manuelle Analysen laufen zu lassen:
@@ -69,11 +102,19 @@ Um die Container nach dem Test für manuelle Analysen laufen zu lassen:
 
 ### Unter Linux / WSL / macOS (Bash oder Make)
 ```bash
-# Mit Bash-Skript
-./run-benchmark.sh --vus 50 --duration 3m --seed-rows 200000
+# Bestimmtes Szenario ausführen
+./run-benchmark.sh --scenario lakehouse
+./run-benchmark.sh --scenario enterprise
+./run-benchmark.sh --scenario minimal
 
 # Oder mit Makefile
-make bench
+make bench-minimal
+make bench-lakehouse
+make bench-enterprise
+make bench-full
+
+# Direkte Ausführung der Extension-Tests
+make test-ext
 ```
 
 ---

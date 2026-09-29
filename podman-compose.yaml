@@ -12,6 +12,7 @@ volumes:
   postgres-data:
   governance-data:
   prometheus-data:
+  minio-data:
 
 services:
   # ----------------------------------------------------------------------------
@@ -86,6 +87,9 @@ services:
       context: .
       dockerfile: containers/sqlserver/Containerfile
     container_name: gqlgateway-sqlserver
+    profiles:
+      - relational
+      - full
     networks:
       - gateway-bench-net
     environment:
@@ -100,6 +104,97 @@ services:
       timeout: 3s
       retries: 25
       start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # 3c. MinIO (S3-Compatible Object Storage for Apache Iceberg Lakehouse Extension)
+  # ----------------------------------------------------------------------------
+  minio:
+    image: docker.io/minio/minio:latest
+    container_name: gqlgateway-minio
+    profiles:
+      - lakehouse
+      - full
+    networks:
+      - gateway-bench-net
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data:Z
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+
+  # ----------------------------------------------------------------------------
+  # 3d. Lakehouse Seed (MinIO Bucket Initializer & Iceberg Table Ingester)
+  # ----------------------------------------------------------------------------
+  lakehouse-seed:
+    build:
+      context: .
+      dockerfile: containers/lakehouse-seed/Containerfile
+    container_name: gqlgateway-lakehouse-seed
+    profiles:
+      - lakehouse
+      - full
+    networks:
+      - gateway-bench-net
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/.lakehouse_seed_complete || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 2s
+
+  # ----------------------------------------------------------------------------
+  # 3e. Mock Extensions (OpenMetadata, ServiceNow, Jira, and dbt Provider)
+  # ----------------------------------------------------------------------------
+  mock-extensions:
+    build:
+      context: .
+      dockerfile: containers/mock-extensions/Containerfile
+    container_name: gqlgateway-mock-extensions
+    profiles:
+      - enterprise
+      - full
+    networks:
+      - gateway-bench-net
+    ports:
+      - "8585:8585"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8585/health || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 2s
+
+  # ----------------------------------------------------------------------------
+  # 3f. Azurite (Azure Blob Storage / ADLS Gen2 Emulator for Lakehouse)
+  # ----------------------------------------------------------------------------
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.33.0
+    container_name: gqlgateway-azurite
+    profiles:
+      - azure
+    networks:
+      - gateway-bench-net
+    command: "azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --skipApiVersionCheck"
+    ports:
+      - "10000:10000"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 10000 || exit 0"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
   # ----------------------------------------------------------------------------
   # 4. GqlGateway.Api (.NET 8/10 Microservice with Zero-Trust Governance Pipeline)
@@ -122,6 +217,11 @@ services:
       Gateway__DataSources__Connections__finance__ConnectionString: "Host=postgres;Port=5432;Database=governancedb;Username=gqluser;Password=gqlpass;Pooling=true;Minimum Pool Size=5;Maximum Pool Size=100"
       Gateway__DataSources__Connections__crm__ConnectionString: "Server=sqlserver,1433;Database=crmdb;User Id=sa;Password=GqlPassw0rd!2026;TrustServerCertificate=True;Connect Timeout=15;Pooling=true;Min Pool Size=3;Max Pool Size=50"
       Gateway__Caching__Redis__Configuration: "redis:6379,abortConnect=false"
+      # Extension feature flags toggled per scenario
+      Gateway__Lakehouse__Enabled: "${ENABLE_LAKEHOUSE:-true}"
+      Gateway__OpenMetadata__Enabled: "${ENABLE_ENTERPRISE:-true}"
+      Gateway__Catalog__Enabled: "${ENABLE_ENTERPRISE:-true}"
+      Gateway__Itsm__Enabled: "${ENABLE_ENTERPRISE:-true}"
     volumes:
       - governance-data:/app/data:z
     ports:
@@ -132,8 +232,6 @@ services:
       redis:
         condition: service_healthy
       governance-seed:
-        condition: service_healthy
-      sqlserver:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5050/health/live || exit 1"]
@@ -192,6 +290,9 @@ services:
   prometheus:
     image: docker.io/prom/prometheus:latest
     container_name: gqlgateway-prometheus
+    profiles:
+      - monitoring
+      - full
     networks:
       - gateway-bench-net
     volumes:
@@ -209,6 +310,9 @@ services:
   grafana:
     image: docker.io/grafana/grafana:latest
     container_name: gqlgateway-grafana
+    profiles:
+      - monitoring
+      - full
     networks:
       - gateway-bench-net
     environment:
